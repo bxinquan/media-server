@@ -11,7 +11,7 @@
 #include <assert.h>
 
 #define PCR_DELAY			0 //(700 * 90) // 700ms
-#define N_MPEG_TS_STREAM	8
+#define PAT_PERIOD			(400 * 90) // 500ms
 
 #define TS_HEADER_LEN		4 // 1-bytes sync byte + 2-bytes PID + 1-byte CC
 #define PES_HEADER_LEN		6 // 3-bytes packet_start_code_prefix + 1-byte stream_id + 2-bytes PES_packet_length
@@ -24,9 +24,10 @@
 
 typedef struct _mpeg_ts_enc_context_t
 {
-	pat_t pat;
+    struct pat_t pat;
+    int h264_h265_with_aud;
 
-	unsigned int pat_period;
+	int64_t pat_period;
 	int64_t pcr_period;
 	int64_t pcr_clock; // last pcr time
 
@@ -85,20 +86,16 @@ static int mpeg_ts_write_section_header(const mpeg_ts_enc_context_t *ts, int pid
 	return 0;
 }
 
-static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8_t* payload, size_t bytes)
+static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, const struct pmt_t* pmt, struct pes_t *stream, const uint8_t* payload, size_t bytes)
 {
 	// 2.4.3.6 PES packet
 	// Table 2-21
 
 	size_t len = 0;
 	int start = 1; // first packet
-    int keyframe; // video IDR-frame
-	uint8_t *p = NULL;
-	uint8_t *pes = NULL;
+    uint8_t *p = NULL;
 	uint8_t *data = NULL;
-
-	keyframe = (PSI_STREAM_H264 == stream->avtype && find_h264_keyframe(payload, bytes)) || 
-				(PSI_STREAM_H265 == stream->avtype && find_h265_keyframe(payload, bytes));
+    uint8_t *header = NULL;
 
 	while(bytes > 0)
 	{
@@ -118,14 +115,14 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 		// 2.7.2 Frequency of coding the program clock reference
 		// http://www.bretl.com/mpeghtml/SCR.HTM
 		// the maximum between PCRs is 100ms.  
-		if(start && stream->pid == tsctx->pat.pmt[0].PCR_PID)
+		if(start && stream->pid == pmt->PCR_PID)
 		{
 			data[3] |= 0x20; // +AF
 			data[5] |= AF_FLAG_PCR; // +PCR_flag
 		}
 
 		// random_access_indicator
-		if(start && keyframe && PTS_NO_VALUE != stream->pts)
+		if(start && stream->data_alignment_indicator && PTS_NO_VALUE != stream->pts)
 		{
 			//In the PCR_PID the random_access_indicator may only be set to '1' 
 			//in a transport stream packet containing the PCR fields.
@@ -135,7 +132,7 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 
 		if(data[3] & 0x20)
 		{
-			data[4] = 1; // 1-byte flag length
+			data[4] = 1; // 1-byte flag
 
 			if(data[5] & AF_FLAG_PCR) // PCR_flag
 			{
@@ -145,23 +142,23 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 				data[4] += 6; // 6-PCR
 			}
 
-			pes = data + TS_HEADER_LEN + 1 + data[4]; // 4-TS + 1-AF-Len + AF-Payload
+            header = data + TS_HEADER_LEN + 1 + data[4]; // 4-TS + 1-AF-Len + AF-Payload
 		}
 		else
 		{
-			pes = data + TS_HEADER_LEN;
+            header = data + TS_HEADER_LEN;
 		}
 
-		p = pes;
+		p = header;
 
 		// PES header
 		if(start)
 		{
 			data[1] |= TS_PAYLOAD_UNIT_START_INDICATOR; // payload_unit_start_indicator
 
-			p = pes + pes_write_header(stream->pts, stream->dts, stream->sid, pes);
+            p += pes_write_header(stream, header, TS_PACKET_SIZE - (header - data));
 
-			if(PSI_STREAM_H264 == stream->avtype && 0 == find_h264_access_unit_delimiter(payload, bytes))
+			if(PSI_STREAM_H264 == stream->codecid && !tsctx->h264_h265_with_aud)
 			{
 				// 2.14 Carriage of Rec. ITU-T H.264 | ISO/IEC 14496-10 video
 				// Each AVC access unit shall contain an access unit delimiter NAL Unit
@@ -170,13 +167,13 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 				p[5] = 0xF0; // any slice type (0xe) + rbsp stop one bit
 				p += 6;
 			}
-			else if (PSI_STREAM_H265 == stream->avtype && 0 == find_h265_access_unit_delimiter(payload, bytes))
+			else if (PSI_STREAM_H265 == stream->codecid && !tsctx->h264_h265_with_aud)
 			{
 				// 2.17 Carriage of HEVC
 				// Each HEVC access unit shall contain an access unit delimiter NAL unit.
 				nbo_w32(p, 0x00000001);
 				p[4] = 0x46; // 35-AUD_NUT
-				p[5] = 01;
+				p[5] = 0x01;
 				p[6] = 0x50; // B&P&I (0x2) + rbsp stop one bit
 				p += 7;
 			}
@@ -185,10 +182,10 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 			// A value of 0 indicates that the PES packet length is neither specified nor bounded 
 			// and is allowed only in PES packets whose payload consists of bytes from a 
 			// video elementary stream contained in transport stream packets
-			if((p - pes - PES_HEADER_LEN) + bytes > 0xFFFF)
-				nbo_w16(pes + 4, 0); // 2.4.3.7 PES packet => PES_packet_length
+			if((p - header - PES_HEADER_LEN) + bytes > 0xFFFF)
+				nbo_w16(header + 4, 0); // 2.4.3.7 PES packet => PES_packet_length
 			else
-				nbo_w16(pes + 4, (uint16_t)((p - pes - PES_HEADER_LEN) + bytes));
+				nbo_w16(header + 4, (uint16_t)((p - header - PES_HEADER_LEN) + bytes));
 		}
 
 		len = p - data; // TS + PES header length
@@ -197,30 +194,30 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 			// stuffing_len = TS_PACKET_SIZE - (len + bytes)
 
 			// move pes header
-			if(p - pes > 0)
+			if(p - header > 0)
 			{
 				assert(start);
-				memmove(data + (TS_PACKET_SIZE - bytes - (p - pes)), pes, p - pes);
+				memmove(data + (TS_PACKET_SIZE - bytes - (p - header)), header, p - header);
 			}
 
 			// adaptation
 			if(data[3] & 0x20) // has AF?
 			{
-				assert(0 != data[5]);
-				memset(data + 5 + data[4], 0xFF, TS_PACKET_SIZE - (len + bytes));
+				assert(0 != data[5] && data[4] > 0);
+				memset(data + TS_HEADER_LEN + 1 + data[4], 0xFF, TS_PACKET_SIZE - (len + bytes));
 				data[4] += (uint8_t)(TS_PACKET_SIZE - (len + bytes));
 			}
 			else
 			{
-				memset(data + 4, 0xFF, TS_PACKET_SIZE - (len + bytes));
-				data[3] |= 0x20;
-				data[4] = (uint8_t)(TS_PACKET_SIZE - (len + bytes) - 1);
-				if(data[4] > 0)
-					data[5] = 0; // no flag
+                assert(len == (size_t)(p - header) + TS_HEADER_LEN);
+                data[3] |= 0x20; // +AF
+                data[4] = (uint8_t)(TS_PACKET_SIZE - (len + bytes) - 1/*AF length*/);
+                if (data[4] > 0) data[5] = 0; // no flag
+                if (data[4] > 1) memset(data + 6, 0xFF, TS_PACKET_SIZE - (len + bytes) - 2);
 			}
+            len = bytes;
 
-			len = bytes;
-			p = data + 5 + data[4] + (p - pes);
+			p = data + 5 + data[4] + (p - header);
 		}
 		else
 		{
@@ -242,63 +239,70 @@ static int ts_write_pes(mpeg_ts_enc_context_t *tsctx, pes_t *stream, const uint8
 	return 0;
 }
 
-int mpeg_ts_write(void* ts, int avtype, int64_t pts, int64_t dts, const void* data, size_t bytes)
+static struct pes_t *mpeg_ts_find(mpeg_ts_enc_context_t *ts, int pid, struct pmt_t** pmt)
+{
+    size_t i, j;
+    struct pes_t* stream;
+
+    for (i = 0; i < ts->pat.pmt_count; i++)
+    {
+        *pmt = &ts->pat.pmts[i];
+        for (j = 0; j < (*pmt)->stream_count; j++)
+        {
+            stream = &(*pmt)->streams[j];
+            if (pid == (int)stream->pid)
+                return stream;
+        }
+    }
+
+    return NULL;
+}
+
+int mpeg_ts_write(void* ts, int pid, int flags, int64_t pts, int64_t dts, const void* data, size_t bytes)
 {
 	size_t i, r;
-	pes_t *stream = NULL;
+    struct pmt_t *pmt = NULL;
+	struct pes_t *stream = NULL;
 	mpeg_ts_enc_context_t *tsctx;
 
 	tsctx = (mpeg_ts_enc_context_t*)ts;
+    stream = mpeg_ts_find(tsctx, pid, &pmt);
+    if (NULL == stream)
+        return -ENOENT; // not found
 
-	// Elementary Stream
-	for (i = 0; i < tsctx->pat.pmt[0].stream_count; i++)
+    stream->pts = pts;
+    stream->dts = dts;
+    stream->data_alignment_indicator = (flags & MPEG_FLAG_IDR_FRAME) ? 1 : 0; // idr frame
+    tsctx->h264_h265_with_aud = (flags & MPEG_FLAG_H264_H265_WITH_AUD) ? 1 : 0;
+
+    // set PCR_PID
+    assert(1 == tsctx->pat.pmt_count);
+    if (0x1FFF == pmt->PCR_PID || (PES_SID_VIDEO == (stream->sid & PES_SID_VIDEO) && pmt->PCR_PID != stream->pid))
+    {
+        pmt->PCR_PID = stream->pid;
+        tsctx->pat_period = 0;
+    }
+
+	if (pmt->PCR_PID == stream->pid)
+		++tsctx->pcr_clock;
+
+	if(0 == tsctx->pat_period || tsctx->pat_period + PAT_PERIOD <= dts)
 	{
-		stream = &tsctx->pat.pmt[0].streams[i];
+		tsctx->pat_period = dts;
 
-		// enable audio stream type change (AAC -> MP3)
-		if (PES_SID_AUDIO == stream->sid 
-			&& (PSI_STREAM_AAC == avtype || PSI_STREAM_MP3 == avtype)
-			&& avtype != stream->avtype)
-		{
-			stream->avtype = (uint8_t)avtype;
-			mpeg_ts_reset(tsctx);
-		}
-
-		if (avtype == (int)stream->avtype)
-		{
-			stream->pts = pts;
-			stream->dts = dts;
-
-			if (0x1FFF == tsctx->pat.pmt[0].PCR_PID 
-				|| (0xE0 == (tsctx->pat.pmt[0].streams[i].sid&PES_SID_VIDEO) && tsctx->pat.pmt[0].PCR_PID != tsctx->pat.pmt[0].streams[i].pid))
-			{
-				tsctx->pat.pmt[0].PCR_PID = tsctx->pat.pmt[0].streams[i].pid;
-				tsctx->pat_period = 0;
-			}
-
-			if (tsctx->pat.pmt[0].PCR_PID == tsctx->pat.pmt[0].streams[i].pid)
-				++tsctx->pcr_clock;
-			break;
-		}
-	}
-
-	if(0 == tsctx->pat_period)
-	{
 		// PAT(program_association_section)
 		r = pat_write(&tsctx->pat, tsctx->payload);
-		mpeg_ts_write_section_header(ts, 0x00, &tsctx->pat.cc, tsctx->payload, r); // PID = 0x00 program association table
+		mpeg_ts_write_section_header(ts, PAT_TID_PAS, &tsctx->pat.cc, tsctx->payload, r); // PID = 0x00 program association table
 
 		// PMT(Transport stream program map section)
 		for(i = 0; i < tsctx->pat.pmt_count; i++)
 		{
-			r = pmt_write(&tsctx->pat.pmt[i], tsctx->payload);
-			mpeg_ts_write_section_header(ts, tsctx->pat.pmt[i].pid, &tsctx->pat.pmt[i].cc, tsctx->payload, r);
+			r = pmt_write(&tsctx->pat.pmts[i], tsctx->payload);
+			mpeg_ts_write_section_header(ts, tsctx->pat.pmts[i].pid, &tsctx->pat.pmts[i].cc, tsctx->payload, r);
 		}
 	}
 
-	tsctx->pat_period = (tsctx->pat_period + 1) % 200;
-
-	ts_write_pes(tsctx, stream, data, bytes);
+	ts_write_pes(tsctx, pmt, stream, data, bytes);
 	return 0;
 }
 
@@ -307,9 +311,7 @@ void* mpeg_ts_create(const struct mpeg_ts_func_t *func, void* param)
 	mpeg_ts_enc_context_t *tsctx = NULL;
 
 	assert(func);
-	tsctx = (mpeg_ts_enc_context_t *)calloc(1, sizeof(mpeg_ts_enc_context_t) 
-											+ sizeof(tsctx->pat.pmt[0])
-											+ 2 * sizeof(tsctx->pat.pmt[0].streams[0]));
+	tsctx = (mpeg_ts_enc_context_t *)calloc(1, sizeof(mpeg_ts_enc_context_t));
 	if(!tsctx)
 		return NULL;
 
@@ -320,25 +322,21 @@ void* mpeg_ts_create(const struct mpeg_ts_func_t *func, void* param)
 	tsctx->pat.cc = 0;
 
     tsctx->pat.pmt_count = 1; // only one program in ts
-    tsctx->pat.pmt = (pmt_t*)(tsctx + 1);
-    tsctx->pat.pmt[0].pid = 0x100;
-    tsctx->pat.pmt[0].pn = 1;
-    tsctx->pat.pmt[0].ver = 0x00;
-    tsctx->pat.pmt[0].cc = 0;
-    tsctx->pat.pmt[0].pminfo_len = 0;
-    tsctx->pat.pmt[0].pminfo = NULL;
-    tsctx->pat.pmt[0].PCR_PID = 0x1FFF; // 0x1FFF-don't set PCR
+    tsctx->pat.pmts[0].pid = 0x100;
+    tsctx->pat.pmts[0].pn = 1;
+    tsctx->pat.pmts[0].ver = 0x00;
+    tsctx->pat.pmts[0].cc = 0;
+    tsctx->pat.pmts[0].pminfo_len = 0;
+    tsctx->pat.pmts[0].pminfo = NULL;
+    tsctx->pat.pmts[0].PCR_PID = 0x1FFF; // 0x1FFF-don't set PCR
 
-    tsctx->pat.pmt[0].stream_count = 2; // H.264 + AAC
-    tsctx->pat.pmt[0].streams = (pes_t*)(tsctx->pat.pmt + 1);
-	tsctx->pat.pmt[0].streams[0].pmt = &tsctx->pat.pmt[0];
-	tsctx->pat.pmt[0].streams[0].pid = 0x101;
-	tsctx->pat.pmt[0].streams[0].sid = PES_SID_AUDIO;
-	tsctx->pat.pmt[0].streams[0].avtype = PSI_STREAM_AAC;
-    tsctx->pat.pmt[0].streams[1].pmt = &tsctx->pat.pmt[0];
-    tsctx->pat.pmt[0].streams[1].pid = 0x102;
-    tsctx->pat.pmt[0].streams[1].sid = PES_SID_VIDEO;
-	tsctx->pat.pmt[0].streams[1].avtype = PSI_STREAM_H264;
+	//tsctx->pat.pmts[0].stream_count = 2; // H.264 + AAC
+	//tsctx->pat.pmts[0].streams[0].pid = 0x101;
+	//tsctx->pat.pmts[0].streams[0].sid = PES_SID_AUDIO;
+	//tsctx->pat.pmts[0].streams[0].codecid = PSI_STREAM_AAC;
+	//tsctx->pat.pmts[0].streams[1].pid = 0x102;
+	//tsctx->pat.pmts[0].streams[1].sid = PES_SID_VIDEO;
+	//tsctx->pat.pmts[0].streams[1].codecid = PSI_STREAM_H264;
 
 	memcpy(&tsctx->func, func, sizeof(tsctx->func));
 	tsctx->param = param;
@@ -353,10 +351,10 @@ int mpeg_ts_destroy(void* ts)
 
 	for(i = 0; i < tsctx->pat.pmt_count; i++)
 	{
-		for(j = 0; j < tsctx->pat.pmt[i].stream_count; j++)
+		for(j = 0; j < tsctx->pat.pmts[i].stream_count; j++)
 		{
-			if(tsctx->pat.pmt[i].streams[j].esinfo)
-				free(tsctx->pat.pmt[i].streams[j].esinfo);
+			if(tsctx->pat.pmts[i].streams[j].esinfo)
+				free(tsctx->pat.pmts[i].streams[j].esinfo);
 		}
 	}
 
@@ -374,49 +372,57 @@ int mpeg_ts_reset(void* ts)
 	return 0;
 }
 
-int mpeg_ts_add_stream(void* ts, int avtype)
+int mpeg_ts_add_stream(void* ts, int codecid, const void* extra_data, size_t extra_data_size)
 {
-	pmt_t *pmt = NULL;
-	mpeg_ts_enc_context_t *tsctx;
+    struct pmt_t *pmt = NULL;
+    struct pes_t *stream = NULL;
+    mpeg_ts_enc_context_t *tsctx;
 
-	tsctx = (mpeg_ts_enc_context_t*)ts;
-	pmt = tsctx->pat.pmt;
-	if(pmt->stream_count + 1 >= N_MPEG_TS_STREAM)
-	{
-		assert(0);
-		return -1;
-	}
+    tsctx = (mpeg_ts_enc_context_t*)ts;
+    pmt = &tsctx->pat.pmts[0];
+    if (pmt->stream_count >= sizeof(pmt->streams)/sizeof(pmt->streams[0]))
+    {
+        assert(0);
+        return -1;
+    }
 
-	pmt = &tsctx->pat.pmt[0];
-	pmt->streams[pmt->stream_count].avtype = (uint8_t)avtype;
-	pmt->streams[pmt->stream_count].pid = (uint16_t)(TS_PID_USER + pmt->stream_count);
-	pmt->streams[pmt->stream_count].esinfo_len = 0;
-	pmt->streams[pmt->stream_count].esinfo = NULL;
+    stream = &pmt->streams[pmt->stream_count];
+    stream->codecid = (uint8_t)codecid;
+    stream->pid = (uint16_t)(0x101 + pmt->stream_count);
+    stream->esinfo_len = 0;
+    stream->esinfo = NULL;
 
-	// stream id
-	// Table 2-22 ¨C Stream_id assignments
-	if(PSI_STREAM_H264==avtype || PSI_STREAM_H265 == avtype || PSI_STREAM_MPEG4==avtype || PSI_STREAM_MPEG2==avtype || PSI_STREAM_MPEG1==avtype || PSI_STREAM_VIDEO_VC1==avtype || PSI_STREAM_VIDEO_SVAC==avtype)
-	{
-		// Rec. ITU-T H.262 | ISO/IEC 13818-2, ISO/IEC 11172-2, ISO/IEC 14496-2 
-		// or Rec. ITU-T H.264 | ISO/IEC 14496-10 video stream number
-		pmt->streams[pmt->stream_count].sid = PES_SID_VIDEO;
-	}
-	else if(PSI_STREAM_AAC==avtype || PSI_STREAM_MPEG4_AAC_LATM==avtype || PSI_STREAM_MPEG4_AAC==avtype || PSI_STREAM_MP3==avtype || PSI_STREAM_AUDIO_AC3==avtype 
-		|| PSI_STREAM_AUDIO_SVAC==avtype || PSI_STREAM_AUDIO_G711==avtype || PSI_STREAM_AUDIO_G722==avtype || PSI_STREAM_AUDIO_G723==avtype || PSI_STREAM_AUDIO_G729==avtype)
-	{
-		// ISO/IEC 13818-3 or ISO/IEC 11172-3 or ISO/IEC 13818-7 or ISO/IEC 14496-3
-		// audio stream number
-		pmt->streams[pmt->stream_count].sid = PES_SID_AUDIO;
-	}
-	else
-	{
-		// private_stream_1
-		pmt->streams[pmt->stream_count].sid = PES_SID_PRIVATE_1;
-	}
+    // stream id
+    // Table 2-22 ¨C Stream_id assignments
+    if (mpeg_stream_type_video(codecid))
+    {
+        // Rec. ITU-T H.262 | ISO/IEC 13818-2, ISO/IEC 11172-2, ISO/IEC 14496-2 
+        // or Rec. ITU-T H.264 | ISO/IEC 14496-10 video stream number
+        stream->sid = PES_SID_VIDEO;
+    }
+    else if (mpeg_stream_type_audio(codecid))
+    {
+        // ISO/IEC 13818-3 or ISO/IEC 11172-3 or ISO/IEC 13818-7 or ISO/IEC 14496-3
+        // audio stream number
+        stream->sid = PES_SID_AUDIO;
+    }
+    else
+    {
+        // private_stream_1
+        stream->sid = PES_SID_PRIVATE_1;
+    }
 
-	++pmt->stream_count;
-	pmt->ver = (pmt->ver+1) % 32;
+    if (extra_data_size > 0 && extra_data)
+    {
+        stream->esinfo = malloc(extra_data_size);
+        if (!stream->esinfo)
+            return -ENOMEM;
+        memcpy(stream->esinfo, extra_data, extra_data_size);
+        stream->esinfo_len = (uint16_t)extra_data_size;
+    }
 
-	mpeg_ts_reset(ts); // immediate update pat/pmt
-	return 0;
+    pmt->stream_count++;
+    pmt->ver = (pmt->ver + 1) % 32;
+    mpeg_ts_reset(ts); // immediate update pat/pmt
+    return stream->pid;
 }

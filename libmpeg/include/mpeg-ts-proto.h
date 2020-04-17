@@ -6,7 +6,7 @@
 
 #define TS_PACKET_SIZE		188
 
-typedef struct _ts_adaptation_field_t
+struct ts_adaptation_field_t
 {
 	unsigned int adaptation_field_length : 8;
 	unsigned int discontinuity_indicator : 1;
@@ -40,9 +40,9 @@ typedef struct _ts_adaptation_field_t
 
 	unsigned int Splice_type : 4;
 	int64_t DTS_next_AU;
-} ts_adaptation_field_t;
+};
 
-typedef struct _ts_packet_header_t
+struct ts_packet_header_t
 {
 	unsigned int transport_error_indicator : 1;
 	unsigned int payload_unit_start_indicator : 1;
@@ -52,10 +52,10 @@ typedef struct _ts_packet_header_t
 	unsigned int adaptation_field_control : 2;
 	unsigned int continuity_counter : 4;
 
-	ts_adaptation_field_t adaptation;
-} ts_packet_header_t;
+	struct ts_adaptation_field_t adaptation;
+};
 
-typedef struct _pmt_t
+struct pmt_t
 {
 	unsigned int pid;		// PID : 13 [0x0010, 0x1FFE]
 	unsigned int pn;		// program_number: 16 [1, 0xFFFF]
@@ -64,30 +64,34 @@ typedef struct _pmt_t
 	unsigned int PCR_PID;	// 13-bits
 	unsigned int pminfo_len;// program_info_length : 12
 	uint8_t* pminfo;	// program_info;
+    
+    char provider[64];
+    char name[64];
 
 	unsigned int stream_count;
-	pes_t *streams;
-} pmt_t;
+	struct pes_t streams[4];
+};
 
-typedef struct _pat_t
+struct pat_t
 {
 	unsigned int tsid;	// transport_stream_id : 16;
 	unsigned int ver;	// version_number : 5;
 	unsigned int cc;	//continuity_counter : 4;
 
 	unsigned int pmt_count;
-	pmt_t *pmt;
-} pat_t;
+	struct pmt_t pmts[4];
+};
 
 // Table 2-3 ¨C PID table(p36)
 enum ETS_PID
 {
 	TS_PID_PAT	= 0x00, // program association table
 	TS_PID_CAT	= 0x01, // conditional access table
-	TS_PID_SDT	= 0x02, // transport stream description table
+	TS_PID_TSDT	= 0x02, // transport stream description table
 	TS_PID_IPMP	= 0x03, // IPMP control information table
 	// 0x0004-0x000F Reserved
 	// 0x0010-0x1FFE May be assigned as network_PID, Program_map_PID, elementary_PID, or for other purposes
+    TS_PID_SDT  = 0x11, // https://en.wikipedia.org/wiki/Service_Description_Table / https://en.wikipedia.org/wiki/MPEG_transport_stream
 	TS_PID_USER	= 0x0042,
 	TS_PID_NULL	= 0x1FFF, // Null packet
 };
@@ -106,6 +110,7 @@ enum EPAT_TID
 	PAT_TID_IPMP			= 0x07, // IPMP_Control_Information_section(defined in ISO/IEC 13818-11)
 	PAT_TID_H222			= 0x08, // Rec. ITU-T H.222.0 | ISO/IEC 13818-1 reserved
 	PAT_TID_USER			= 0x40,	// User private
+    PAT_TID_SDT             = 0x42, // service_description_section 
 	PAT_TID_Forbidden		= 0xFF,
 };
 
@@ -161,17 +166,25 @@ enum EPSI_STREAM_TYPE
 	PSI_STREAM_AUDIO_DTS		= 0x8a, // ffmpeg/libavformat/mpegts.h
 	PSI_STREAM_VIDEO_DIRAC		= 0xd1, // ffmpeg/libavformat/mpegts.h
 	PSI_STREAM_VIDEO_VC1		= 0xea, // ffmpeg/libavformat/mpegts.h
-	PSI_STREAM_VIDEO_SVAC		= 0x80, // GBT 25724-2010 SVAC
+	PSI_STREAM_VIDEO_SVAC		= 0x80, // GBT 25724-2010 SVAC(2014)
 	PSI_STREAM_AUDIO_SVAC		= 0x9B, // GBT 25724-2010 SVAC(2014)
-	PSI_STREAM_AUDIO_G711		= 0x90, // GBT 25724-2010 SVAC(2014)
-	PSI_STREAM_AUDIO_G722		= 0x92, // GBT 25724-2010 SVAC(2014)
-	PSI_STREAM_AUDIO_G723		= 0x93, // GBT 25724-2010 SVAC(2014)
-	PSI_STREAM_AUDIO_G729		= 0x99, // GBT 25724-2010 SVAC(2014)
+	PSI_STREAM_AUDIO_G711		= 0x90,
+	PSI_STREAM_AUDIO_G722		= 0x92,
+	PSI_STREAM_AUDIO_G723		= 0x93,
+	PSI_STREAM_AUDIO_G729		= 0x99,
 };
 
-size_t pat_read(const uint8_t* data, size_t bytes, pat_t *pat);
-size_t pat_write(const pat_t *pat, uint8_t *data);
-size_t pmt_read(const uint8_t* data, size_t bytes, pmt_t *pmt);
-size_t pmt_write(const pmt_t *pmt, uint8_t *data);
+enum
+{
+    MPEG_FLAG_IDR_FRAME          = 0x0001,
+    MPEG_FLAG_H264_H265_WITH_AUD = 0x8000,
+};
+
+struct pmt_t* pat_find(struct pat_t* pat, uint16_t pn);
+size_t pat_read(struct pat_t *pat, const uint8_t* data, size_t bytes);
+size_t pat_write(const struct pat_t *pat, uint8_t *data);
+size_t pmt_read(struct pmt_t *pmt, const uint8_t* data, size_t bytes);
+size_t pmt_write(const struct pmt_t *pmt, uint8_t *data);
+size_t sdt_read(struct pat_t *pat, const uint8_t* data, size_t bytes);
 
 #endif /* !_mpeg_ts_proto_h_ */

@@ -77,7 +77,8 @@ static int rtmp_packet_alloc(struct rtmp_t* rtmp, struct rtmp_packet_t* packet)
 	// 24-bytes length
 	assert(0 == packet->bytes);
 	assert(packet->header.length < (1 << 24));
-	if (packet->capacity < packet->header.length)
+	// fixed SMS (Chinacache Smart Media Server) packet->header.length = 0
+	if (0 == packet->capacity || packet->capacity < packet->header.length)
 	{
 		p = realloc(packet->payload, packet->header.length + 1024);
 		if (NULL == p)
@@ -164,25 +165,25 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
 			assert(parser->bytes <= size);
 			if (parser->bytes >= size)
 			{
+				extended_timestamp = parser->pkt->header.timestamp;
 				if (parser->pkt->header.timestamp == 0xFFFFFF)
 				{
 					// parse extended timestamp
 					rtmp_chunk_extended_timestamp_read(parser->buffer + s_header_size[parser->buffer[0] >> 6] + parser->basic_bytes, &extended_timestamp);
+					if (RTMP_CHUNK_TYPE_3 == parser->pkt->header.fmt && extended_timestamp != parser->pkt->delta)
+						offset -= 4;
 				}
 
 				// first chunk
 				if (0 == parser->pkt->bytes)
 				{
+					parser->pkt->delta = extended_timestamp;
+
 					// handle timestamp/delta
 					if (RTMP_CHUNK_TYPE_0 == parser->pkt->header.fmt)
-					{
-						parser->pkt->clock = 0xFFFFFF == parser->pkt->header.timestamp ? extended_timestamp : parser->pkt->header.timestamp;
-						parser->pkt->delta = 0; // clear delta(use as delta)
-					}
+						parser->pkt->clock = parser->pkt->delta;
 					else
-					{
-						parser->pkt->delta = 0xFFFFFF == parser->pkt->header.timestamp ? extended_timestamp : parser->pkt->header.timestamp;
-					}
+						parser->pkt->clock += parser->pkt->delta;
 
 					if (0 != rtmp_packet_alloc(rtmp, parser->pkt))
 						return ENOMEM;
@@ -213,7 +214,6 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
 				assert(parser->pkt->bytes == parser->pkt->header.length);
 				parser->state = RTMP_PARSE_INIT; // reset parser state
 				parser->pkt->bytes = 0; // clear bytes
-				parser->pkt->clock += parser->pkt->delta;
 
 				memcpy(&header, &parser->pkt->header, sizeof(header));
 				header.timestamp = parser->pkt->clock;

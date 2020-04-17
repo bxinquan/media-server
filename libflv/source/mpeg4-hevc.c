@@ -1,4 +1,5 @@
 #include "mpeg4-hevc.h"
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
@@ -82,7 +83,7 @@ int mpeg4_hevc_decoder_configuration_record_load(const uint8_t* data, size_t byt
 	hevc->general_profile_idc = data[1] & 0x1F;
 	hevc->general_profile_compatibility_flags = (data[2] << 24) | (data[3] << 16) | (data[4] << 8) | data[5];
 	hevc->general_constraint_indicator_flags = (uint32_t)((data[6] << 24) | (data[7] << 16) | (data[8] << 8) | data[9]);
-	hevc->general_constraint_indicator_flags = (hevc->general_constraint_indicator_flags << 16) | (data[10] << 8) | data[11];
+	hevc->general_constraint_indicator_flags = (hevc->general_constraint_indicator_flags << 16) | (((uint64_t)data[10]) << 8) | data[11];
 	hevc->general_level_idc = data[12];
 	hevc->min_spatial_segmentation_idc = ((data[13] & 0x0F) << 8) | data[14];
 	hevc->parallelismType = data[15] & 0x03;
@@ -139,7 +140,7 @@ int mpeg4_hevc_decoder_configuration_record_load(const uint8_t* data, size_t byt
 		}
 	}
 
-	return p - data;
+	return (int)(p - data);
 }
 
 int mpeg4_hevc_decoder_configuration_record_save(const struct mpeg4_hevc_t* hevc, uint8_t* data, size_t bytes)
@@ -148,7 +149,7 @@ int mpeg4_hevc_decoder_configuration_record_save(const struct mpeg4_hevc_t* hevc
 	uint8_t i, j, k;
 	uint8_t *ptr, *end;
 	uint8_t *p = data;
-	uint8_t array_completeness;
+	uint8_t array_completeness = 1;
 	const uint8_t nalu[] = {H265_VPS, H265_SPS, H265_PPS, H265_PREFIX_SEI, H265_SUFFIX_SEI};
 
 	assert(hevc->lengthSizeMinusOne <= 3);
@@ -219,7 +220,7 @@ int mpeg4_hevc_decoder_configuration_record_save(const struct mpeg4_hevc_t* hevc
 
 	data[22] = k;
 
-	return p - data;
+	return (int)(p - data);
 }
 
 int mpeg4_hevc_to_nalu(const struct mpeg4_hevc_t* hevc, uint8_t* data, size_t bytes)
@@ -242,10 +243,32 @@ int mpeg4_hevc_to_nalu(const struct mpeg4_hevc_t* hevc, uint8_t* data, size_t by
 		p += 4 + hevc->nalu[i].bytes;
 	}
 
-	return p - data;
+	return (int)(p - data);
+}
+
+int mpeg4_hevc_codecs(const struct mpeg4_hevc_t* hevc, char* codecs, size_t bytes)
+{
+    // ISO/IEC 14496-15:2017(E) 
+    // Annex E Sub-parameters of the MIME type "codecs" parameter (p154)
+    // 'hev1.' or 'hvc1.' prefix (5 chars)
+    // profile, e.g. '.A12' (max 4 chars)
+    // profile_compatibility reserve bit order, dot + 32-bit hex number (max 9 chars)
+    // tier and level, e.g. '.H120' (max 5 chars)
+    // up to 6 constraint bytes, bytes are dot-separated and hex-encoded.
+    const char* tier = "LH";
+    const char* space[] = { "", "A", "B", "C" };
+    uint32_t x;
+    x = hevc->general_profile_compatibility_flags;
+    x = ((x >> 1) & 0x55555555) | ((x & 0x55555555) << 1);
+    x = ((x >> 2) & 0x33333333) | ((x & 0x33333333) << 2);
+    x = ((x >> 4) & 0x0f0f0f0f) | ((x & 0x0f0f0f0f) << 4);
+    x = ((x >> 8) & 0x00ff00ff) | ((x & 0x00ff00ff) << 8);
+    x = (x >> 16) | (x << 16);
+    return snprintf(codecs, bytes, "hvc1.%s%u.%x.%c%u", space[hevc->general_profile_space%4], (unsigned int)hevc->general_profile_idc, (unsigned int)x, tier[hevc->general_tier_flag%2], (unsigned int)hevc->general_level_idc);
 }
 
 #if defined(_DEBUG) || defined(DEBUG)
+void hevc_annexbtomp4_test(void);
 void mpeg4_hevc_test(void)
 {
 	const unsigned char src[] = {
@@ -276,8 +299,12 @@ void mpeg4_hevc_test(void)
 	assert(3 == hevc.numOfArrays);
 	assert(sizeof(src) == mpeg4_hevc_decoder_configuration_record_save(&hevc, data, sizeof(data)));
 	assert(0 == memcmp(src, data, sizeof(src)));
+    mpeg4_hevc_codecs(&hevc, (char*)data, sizeof(data));
+    assert(0 == memcmp("hvc1.1.6.L180", data, 13));
 
 	assert(sizeof(nalu) == mpeg4_hevc_to_nalu(&hevc, data, sizeof(data)));
 	assert(0 == memcmp(nalu, data, sizeof(nalu)));
+
+	hevc_annexbtomp4_test();
 }
 #endif

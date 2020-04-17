@@ -13,6 +13,10 @@ typedef struct aio_rtmp_client_t aio_rtmp_client_t;
 
 struct aio_rtmp_client_handler_t
 {
+	/// aio_rtmp_client_t object destroy
+	/// @param[in] param aio_rtmp_client_create param
+	void (*ondestroy)(void* param);
+
 	/// aio transport recv/send error
 	void (*onerror)(void* param, int code);
 
@@ -34,6 +38,8 @@ void aio_rtmp_client_destroy(aio_rtmp_client_t* client);
 ///@return 0-ok, other-error
 int aio_rtmp_client_start(aio_rtmp_client_t* client, int publish);
 int aio_rtmp_client_stop(aio_rtmp_client_t* client);
+int aio_rtmp_client_pause(aio_rtmp_client_t* rtmp, int pause); // VOD only
+int aio_rtmp_client_seek(aio_rtmp_client_t* rtmp, double timestamp); // VOD only
 
 int aio_rtmp_client_send_audio(aio_rtmp_client_t* client, const void* flv, size_t bytes, uint32_t timestamp);
 int aio_rtmp_client_send_video(aio_rtmp_client_t* client, const void* flv, size_t bytes, uint32_t timestamp);

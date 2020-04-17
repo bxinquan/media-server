@@ -194,7 +194,7 @@ int rtcp_input_rtcp(struct rtp_context *ctx, const void* data, int bytes)
 			break;
 
 		// RFC3550 6.3.3 Receiving an RTP or Non-BYE RTCP Packet (p26)
-		ctx->avg_rtcp_size = (size_t)(ctx->avg_rtcp_size*1.0/16 + r * 15.0/16);
+		ctx->avg_rtcp_size = ctx->avg_rtcp_size*1.0/16 + r * 15.0/16;
 
 		p += r;
 		bytes -= r;
@@ -219,7 +219,7 @@ int rtcp_input_rtp(struct rtp_context *ctx, const void* data, int bytes)
 	clock = rtpclock();
 
 	// RFC3550 A.1 RTP Data Header Validity Checks
-	if(0 == rtp_seq_update(sender, (uint16_t)pkt.rtp.ssrc))
+	if(0 == rtp_seq_update(sender, (uint16_t)pkt.rtp.seq))
 		return 0; // disorder(need more data)
 
 	// RFC3550 A.8 Estimating the Interarrival Jitter

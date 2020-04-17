@@ -101,7 +101,7 @@ static int rtmp_client_send_c2(struct rtmp_client_t* ctx)
 static int rtmp_client_send_connect(struct rtmp_client_t* ctx)
 {
 	int r;
-	r = rtmp_netconnection_connect(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_CONNECT, &ctx->connect) - ctx->payload;
+	r = (int)(rtmp_netconnection_connect(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_CONNECT, &ctx->connect) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, 0);
 }
 
@@ -109,7 +109,7 @@ static int rtmp_client_send_connect(struct rtmp_client_t* ctx)
 static int rmtp_client_send_release_stream(struct rtmp_client_t* ctx)
 {
 	int r;
-	r = rtmp_netstream_release_stream(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload;
+	r = (int)(rtmp_netstream_release_stream(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
@@ -117,7 +117,7 @@ static int rmtp_client_send_release_stream(struct rtmp_client_t* ctx)
 static int rtmp_client_send_fcpublish(struct rtmp_client_t* ctx)
 {
 	int r;
-	r = rtmp_netstream_fcpublish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload;
+	r = (int)(rtmp_netstream_fcpublish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, 0);
 }
 
@@ -125,7 +125,7 @@ static int rtmp_client_send_fcpublish(struct rtmp_client_t* ctx)
 static int rtmp_client_send_fcunpublish(struct rtmp_client_t* ctx)
 {
 	int r;
-	r = rtmp_netstream_fcunpublish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload;
+	r = (int)(rtmp_netstream_fcunpublish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
@@ -134,7 +134,7 @@ static int rtmp_client_send_create_stream(struct rtmp_client_t* ctx)
 {
 	int r;
 	assert(0 == ctx->stream_id);
-	r = rtmp_netconnection_create_stream(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_CREATE_STREAM) - ctx->payload;
+	r = (int)(rtmp_netconnection_create_stream(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_CREATE_STREAM) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, 0);
 }
 
@@ -143,7 +143,7 @@ static int rtmp_client_send_delete_stream(struct rtmp_client_t* ctx)
 {
 	int r;
 	assert(0 != ctx->stream_id);
-	r = rtmp_netstream_delete_stream(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_id) - ctx->payload;
+	r = (int)(rtmp_netstream_delete_stream(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_id) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
@@ -152,7 +152,7 @@ static int rtmp_client_send_publish(struct rtmp_client_t* ctx)
 {
 	int r;
 	assert(0 != ctx->stream_id);
-	r = rtmp_netstream_publish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name, RTMP_STREAM_LIVE) - ctx->payload;
+	r = (int)(rtmp_netstream_publish(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name, RTMP_STREAM_LIVE) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
@@ -161,7 +161,7 @@ static int rtmp_client_send_play(struct rtmp_client_t* ctx)
 {
 	int r;
 	assert(0 != ctx->stream_id);
-	r = rtmp_netstream_play(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name, -2, -1, 1) - ctx->payload;
+	r = (int)(rtmp_netstream_play(ctx->payload, sizeof(ctx->payload), 0, ctx->stream_name, -2, -1, 1) - ctx->payload);
 //	rtmp_client_chunk_header_default(&header, RTMP_CHANNEL_CONTROL, (uint32_t)time(NULL), r, RTMP_TYPE_INVOKE, ctx->stream_id);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
@@ -171,7 +171,7 @@ static int rtmp_client_send_set_chunk_size(struct rtmp_client_t* ctx, size_t siz
 {
 	int n, r;
 	assert(0 == ctx->publish);
-	n = rtmp_set_chunk_size(ctx->payload, sizeof(ctx->payload), size);
+	n = rtmp_set_chunk_size(ctx->payload, sizeof(ctx->payload), (uint32_t)size);
 	r = ctx->handler.send(ctx->param, ctx->payload, n, NULL, 0);
 	return n == r ? 0 : r;
 }
@@ -196,7 +196,7 @@ static int rtmp_client_send_set_buffer_length(struct rtmp_client_t* ctx)
 static int rtmp_client_send_get_stream_length(struct rtmp_client_t* ctx)
 {
 	int r;
-	r = rtmp_netconnection_get_stream_length(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_GET_STREAM_LENGTH, ctx->stream_name) - ctx->payload;
+	r = (int)(rtmp_netconnection_get_stream_length(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_GET_STREAM_LENGTH, ctx->stream_name) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
@@ -270,6 +270,12 @@ static int rtmp_client_onnotify(void* param, enum rtmp_notify_t notify)
 	return 0;
 }
 
+static int rtmp_client_oneof(void* param, uint32_t streamId)
+{
+    (void)streamId;
+    return rtmp_client_onnotify(param, RTMP_NOTIFY_STOP);
+}
+
 static int rtmp_client_onping(void* param, uint32_t seqNo)
 {
 	int n, r;
@@ -292,7 +298,7 @@ static void rtmp_client_onabort(void* param, uint32_t chunk_stream_id)
 {
 	struct rtmp_client_t* ctx;
 	ctx = (struct rtmp_client_t*)param;
-	(void)chunk_stream_id;
+	(void)ctx, (void)chunk_stream_id;
 }
 
 static int rtmp_client_onaudio(void* param, const uint8_t* data, size_t bytes, uint32_t timestamp)
@@ -356,6 +362,7 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
 	ctx->rtmp.u.client.oncreate_stream = rtmp_client_oncreate_stream;
 	ctx->rtmp.u.client.onnotify = rtmp_client_onnotify;
 	ctx->rtmp.u.client.onping = rtmp_client_onping;
+    ctx->rtmp.u.client.oneof = rtmp_client_oneof;
 	ctx->rtmp.u.client.onbandwidth = rtmp_client_onbandwidth;
 
 	snprintf(ctx->connect.app, sizeof(ctx->connect.app), "%s", appname);
@@ -370,6 +377,11 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
 	ctx->connect.videoFunction = SUPPORT_VID_CLIENT_SEEK;
 	ctx->connect.encoding = RTMP_ENCODING_AMF_0;
 
+	ctx->rtmp.out_packets[RTMP_CHANNEL_PROTOCOL].header.cid = RTMP_CHANNEL_PROTOCOL;
+	ctx->rtmp.out_packets[RTMP_CHANNEL_INVOKE].header.cid = RTMP_CHANNEL_INVOKE;
+	ctx->rtmp.out_packets[RTMP_CHANNEL_AUDIO].header.cid = RTMP_CHANNEL_AUDIO;
+	ctx->rtmp.out_packets[RTMP_CHANNEL_VIDEO].header.cid = RTMP_CHANNEL_VIDEO;
+	ctx->rtmp.out_packets[RTMP_CHANNEL_DATA].header.cid = RTMP_CHANNEL_DATA;
 	return ctx;
 }
 
@@ -380,9 +392,7 @@ void rtmp_client_destroy(struct rtmp_client_t* ctx)
 	for (i = 0; i < N_CHUNK_STREAM; i++)
 	{
 		assert(NULL == ctx->rtmp.out_packets[i].payload);
-		if (ctx->rtmp.in_packets[i].payload
-			&& RTMP_TYPE_VIDEO != ctx->rtmp.in_packets[i].header.type
-			&& RTMP_TYPE_AUDIO != ctx->rtmp.in_packets[i].header.type)
+		if (ctx->rtmp.in_packets[i].payload)
 		{
 #if defined(DEBUG) || defined(_DEBUG)
 			memset(ctx->rtmp.in_packets[i].payload, 0xCC, ctx->rtmp.in_packets[i].capacity);
@@ -503,14 +513,14 @@ int rtmp_client_pause(struct rtmp_client_t* ctx, int pause)
 			timestamp = ctx->rtmp.in_packets[i].header.timestamp;
 	}
 
-	r = rtmp_netstream_pause(ctx->payload, sizeof(ctx->payload), 0, pause, timestamp) - ctx->payload;
+	r = (int)(rtmp_netstream_pause(ctx->payload, sizeof(ctx->payload), 0, pause, timestamp) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 
 int rtmp_client_seek(struct rtmp_client_t* ctx, double timestamp)
 {
 	int r;
-	r = rtmp_netstream_seek(ctx->payload, sizeof(ctx->payload), 0, timestamp) - ctx->payload;
+	r = (int)(rtmp_netstream_seek(ctx->payload, sizeof(ctx->payload), 0, timestamp) - ctx->payload);
 	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, ctx->stream_id);
 }
 

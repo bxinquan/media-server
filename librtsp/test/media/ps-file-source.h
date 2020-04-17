@@ -3,14 +3,11 @@
 
 #include "h264-file-reader.h"
 #include "media-source.h"
+#include "mpeg-ps.h"
 #include "sys/process.h"
 #include "time64.h"
 #include "rtp.h"
 #include <string>
-
-#ifndef MAX_UDP_PACKET
-#define MAX_UDP_PACKET (1450-16)
-#endif
 
 class PSFileSource : public IMediaSource
 {
@@ -43,7 +40,8 @@ private:
 	int SendRTCP();
 
 private:
-	void* m_ps;
+	ps_muxer_t* m_ps;
+    int m_ps_stream;
 	void* m_rtp;
 	int m_status;
 	int64_t m_pos;

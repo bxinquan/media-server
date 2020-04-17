@@ -96,7 +96,27 @@ static inline int h264_nal_type(const unsigned char* ptr)
     return H264_NAL(ptr[i+1]);
 }
 
-#define toOffset(ptr) (n - (m_bytes - (ptr - m_ptr)))
+static inline int h264_nal_new_access(const unsigned char* ptr, const uint8_t* end)
+{
+	int i = 2;
+	if (end - ptr < 4)
+		return 1;
+	assert(0x00 == ptr[0] && 0x00 == ptr[1]);
+	if (0x00 == ptr[2])
+		++i;
+	assert(0x01 == ptr[i]);
+	int nal_unit_type = H264_NAL(ptr[i + 1]);
+	if (nal_unit_type < 1 || nal_unit_type > 5)
+		return 1;
+
+	if (ptr + i + 2 > end)
+		return 1;
+
+	// Live555 H264or5VideoStreamParser::parse
+	// The high-order bit of the byte after the "nal_unit_header" tells us whether it's
+	// the start of a new 'access unit' (and thus the current NAL unit ends an 'access unit'):
+	return (ptr[i + 2] & 0x80) != 0 ? 1 : 0;
+}
 
 int H264FileReader::Init()
 {
@@ -105,15 +125,16 @@ int H264FileReader::Init()
 
 	const uint8_t* end = m_ptr + m_capacity;
     const uint8_t* nalu = search_start_code(m_ptr, end);
+	const uint8_t* p = nalu;
 
-	while (nalu < end)
+	while (p < end)
 	{
-        const unsigned char* nalu2 = search_start_code(nalu + 4, end);
-		size_t bytes = nalu2 - nalu;
+        const unsigned char* pn = search_start_code(p + 4, end);
+		size_t bytes = pn - nalu;
 
-        int nal_unit_type = h264_nal_type(nalu);
-        assert(0 != nal_unit_type);
-        if(nal_unit_type <= 5)
+        int nal_unit_type = h264_nal_type(p);
+		assert(0 != nal_unit_type);
+        if(nal_unit_type <= 5 && h264_nal_new_access(pn, end))
         {
             if(m_sps.size() > 0) spspps = false; // don't need more sps/pps
 
@@ -123,20 +144,21 @@ int H264FileReader::Init()
 			frame.time = 40 * count++;
 			frame.idr = 5 == nal_unit_type; // IDR-frame
 			m_videos.push_back(frame);
+			nalu = pn;
         }
         else if(NAL_SPS == nal_unit_type || NAL_PPS == nal_unit_type)
         {
             if(spspps)
             {
-                size_t n = 0x01 == nalu[2] ? 3 : 4;
+                size_t n = 0x01 == p[2] ? 3 : 4;
 				std::pair<const uint8_t*, size_t> pr;
-				pr.first = nalu + n;
+				pr.first = p + n;
 				pr.second = bytes;
 				m_sps.push_back(pr);
             }
         }
 
-        nalu = nalu2;
+        p = pn;
     }
 
     m_duration = 40 * count;

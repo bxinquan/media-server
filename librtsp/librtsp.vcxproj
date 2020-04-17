@@ -132,7 +132,6 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="source\client\rtmp-client-set-parameter.c" />
     <ClCompile Include="source\client\rtp-over-rtsp.c" />
     <ClCompile Include="source\client\rtsp-client-announce.c" />
     <ClCompile Include="source\client\rtsp-client-auth.c" />
@@ -141,7 +140,8 @@
     <ClCompile Include="source\client\rtsp-client-options.c" />
     <ClCompile Include="source\client\rtsp-client-pause.c" />
     <ClCompile Include="source\client\rtsp-client-play.c" />
-    <ClCompile Include="source\client\rtsp-client-sdp.c" />
+    <ClCompile Include="source\client\rtsp-client-record.c" />
+    <ClCompile Include="source\client\rtsp-client-set-parameter.c" />
     <ClCompile Include="source\client\rtsp-client-setup.c" />
     <ClCompile Include="source\client\rtsp-client-teardown.c" />
     <ClCompile Include="source\client\rtsp-client.c" />
@@ -149,16 +149,19 @@
     <ClCompile Include="source\rtsp-header-rtp-info.c" />
     <ClCompile Include="source\rtsp-header-session.c" />
     <ClCompile Include="source\rtsp-header-transport.c" />
-    <ClCompile Include="source\rtsp-parser.c" />
+    <ClCompile Include="source\rtsp-media.c" />
     <ClCompile Include="source\rtsp-reason.c" />
     <ClCompile Include="source\sdp-a-fmtp.c" />
     <ClCompile Include="source\sdp-a-rtpmap.c" />
     <ClCompile Include="source\sdp.c" />
+    <ClCompile Include="source\server\rtsp-server-announce.c" />
     <ClCompile Include="source\server\rtsp-server-describe.c" />
     <ClCompile Include="source\server\rtsp-server-handler.c" />
     <ClCompile Include="source\server\rtsp-server-options.c" />
+    <ClCompile Include="source\server\rtsp-server-parameter.c" />
     <ClCompile Include="source\server\rtsp-server-pause.c" />
     <ClCompile Include="source\server\rtsp-server-play.c" />
+    <ClCompile Include="source\server\rtsp-server-record.c" />
     <ClCompile Include="source\server\rtsp-server-setup.c" />
     <ClCompile Include="source\server\rtsp-server-teardown.c" />
     <ClCompile Include="source\server\rtsp-server.c" />
@@ -170,7 +173,7 @@
     <ClInclude Include="include\rtsp-header-rtp-info.h" />
     <ClInclude Include="include\rtsp-header-session.h" />
     <ClInclude Include="include\rtsp-header-transport.h" />
-    <ClInclude Include="include\rtsp-parser.h" />
+    <ClInclude Include="include\rtsp-media.h" />
     <ClInclude Include="include\rtsp-reason.h" />
     <ClInclude Include="include\rtsp-server.h" />
     <ClInclude Include="include\sdp-a-fmtp.h" />

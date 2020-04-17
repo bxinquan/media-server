@@ -57,8 +57,8 @@ enum rtmp_notify_t
 struct rtmp_packet_t
 {
 	struct rtmp_chunk_header_t header;
+	uint32_t delta; // delta / timestamp
 	uint32_t clock; // timestamp
-	uint32_t delta; // delta timestamp
 
 	uint8_t* payload;
 	size_t capacity; // only for network read
@@ -132,6 +132,7 @@ struct rtmp_t
 			int (*onpublish)(void* param, int r, double transaction, const char* stream_name, const char* stream_type);
 			int (*onseek)(void* param, int r, double transaction, double milliSeconds);
 			int (*onpause)(void* param, int r, double transaction, uint8_t pause, double milliSeconds);
+			int (*onget_stream_length)(void* param, int r, double transaction, const char* stream_name);
 		} server;
 
 		struct
@@ -140,7 +141,8 @@ struct rtmp_t
 			int (*onconnect)(void* param);
 			int (*oncreate_stream)(void* param, double stream_id);
 			int (*onnotify)(void* param, enum rtmp_notify_t notify);
-			int (*onping)(void* param, uint32_t timestamp); // send pong
+            int (*oneof)(void* param, uint32_t stream_id); // EOF event
+			int (*onping)(void* param, uint32_t stream_id); // send pong
 			int (*onbandwidth)(void* param); // send window acknowledgement size
 		} client;
 	} u;

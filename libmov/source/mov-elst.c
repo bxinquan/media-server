@@ -46,17 +46,18 @@ int mov_read_elst(struct mov_t* mov, const struct mov_box_t* box)
 
 size_t mov_write_elst(const struct mov_t* mov)
 {
-	size_t size;
+	uint32_t size;
 	int64_t time;
 	int64_t delay;
 	uint8_t version;
 	const struct mov_track_t* track = mov->track;
 
-	version = 0;
-	if (track->tkhd.duration > UINT32_MAX)
-		version = 1;
+    assert(track->start_dts == track->samples[0].dts);
+	version = track->tkhd.duration > UINT32_MAX ? 1 : 0;
 
+    // in media time scale units, in composition time
 	time = track->samples[0].pts - track->samples[0].dts;
+    // in units of the timescale in the Movie Header Box
 	delay = track->samples[0].pts * mov->mvhd.timescale / track->mdhd.timescale;
 	if (delay > UINT32_MAX)
 		version = 1;
@@ -102,4 +103,34 @@ size_t mov_write_elst(const struct mov_t* mov)
 	mov_buffer_w16(&mov->io, 0); /* media_rate_fraction */
 
 	return size;
+}
+
+void mov_apply_elst(struct mov_track_t *track)
+{
+    size_t i;
+
+    // edit list
+    track->samples[0].dts = 0;
+    track->samples[0].pts = 0;
+    for (i = 0; i < track->elst_count; i++)
+    {
+        if (-1 == track->elst[i].media_time)
+        {
+            track->samples[0].dts = track->elst[i].segment_duration;
+            track->samples[0].pts = track->samples[0].dts;
+        }
+    }
+}
+
+void mov_apply_elst_tfdt(struct mov_track_t *track)
+{
+    size_t i;
+
+    for (i = 0; i < track->elst_count; i++)
+    {
+        if (-1 == track->elst[i].media_time)
+        {
+            track->tfdt_dts += track->elst[i].segment_duration;
+        }
+    }
 }

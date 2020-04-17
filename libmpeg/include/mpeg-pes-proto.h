@@ -2,7 +2,6 @@
 #define _mpeg_pes_dec_h_
 
 #include "mpeg-types.h"
-#include "mpeg-ps-proto.h"
 
 // ISO/IEC 13818-1:2015 (E)
 // 2.4.3.7 Semantic definition of fields in PES packet
@@ -16,7 +15,7 @@ enum EPES_STREAM_ID
 	PES_SID_DTS			= 0x88, // ffmpeg/libavformat/mpeg.h
 	PES_SID_LPCM		= 0xA0, // ffmpeg/libavformat/mpeg.h
 
-	PES_SID_EXTENSION	= 0xB7, // PS system_header extension(p76)
+	PES_SID_EXTENSION	= 0xB7, // PS system_header extension(p81)
 	PES_SID_END			= 0xB9, // MPEG_program_end_code
 	PES_SID_START		= 0xBA, // Pack start code
 	PES_SID_SYS			= 0xBB, // System header start code
@@ -45,16 +44,25 @@ enum EPES_STREAM_ID
 	PES_SID_PSD			= 0xFF, // program_stream_directory
 };
 
-struct _pmt_t;
-struct _psm_t;
-
-typedef struct _pes_t
+struct packet_t
 {
-	struct _pmt_t *pmt;	// program map table
+    uint8_t sid;
+    uint8_t codecid;
 
+    int flags;
+    int64_t pts;
+    int64_t dts;
+    uint8_t *data;
+    size_t size;
+    size_t capacity;
+};
+
+struct pes_t
+{
+    uint16_t pn;        // TS program number(0-ps)
 	uint16_t pid;		// PES PID : 13
 	uint8_t sid;		// PES stream_id : 8
-	uint8_t avtype;		// PMT/PSM stream_type : 8
+	uint8_t codecid;	// PMT/PSM stream_type : 8
 	uint8_t cc;			// continuity_counter : 4;
 	uint8_t* esinfo;	// es_info
 	uint16_t esinfo_len;// es_info_length : 12
@@ -102,11 +110,15 @@ typedef struct _pes_t
 	//uint8_t PES_private_data[128/8];
 
 	//uint32_t pack_field_length : 8;
-	uint8_t *payload;
-	size_t payload_len;
-} pes_t;
 
-size_t pes_read(const uint8_t* data, size_t bytes, psm_t *psm, pes_t *pes);
-size_t pes_write_header(int64_t pts, int64_t dts, int streamId, uint8_t* data);
+    struct packet_t pkt;
+};
+
+size_t pes_read_header(struct pes_t *pes, const uint8_t* data, size_t bytes);
+size_t pes_write_header(const struct pes_t *pes, uint8_t* data, size_t bytes);
+size_t pes_read_mpeg1_header(struct pes_t *pes, const uint8_t* data, size_t bytes);
+
+typedef int (*pes_packet_handler)(void* param, int program, int stream, int codecid, int flags, int64_t pts, int64_t dts, const void* data, size_t bytes);
+int pes_packet(struct packet_t* pkt, const struct pes_t* pes, const void* data, size_t size, pes_packet_handler handler, void* param);
 
 #endif /* !_mpeg_pes_dec_h_ */

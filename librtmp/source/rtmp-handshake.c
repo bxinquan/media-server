@@ -225,14 +225,14 @@ int rtmp_handshake_c2(uint8_t* c2, uint32_t timestamp, const uint8_t* s1, size_t
 	else
 	{
 		memmove(c2, s1, bytes);
-		be_write_uint32(c2 + 4, timestamp);
+		//be_write_uint32(c2 + 4, timestamp);
 	}
 #else
 	assert(RTMP_HANDSHAKE_SIZE == bytes);
 	memmove(c2, s1, bytes);
 	be_write_uint32(c2 + 4, timestamp);
 #endif
-	return bytes;
+	return (int)bytes;
 }
 
 int rtmp_handshake_s0(uint8_t* s0, int version)
@@ -270,12 +270,12 @@ int rtmp_handshake_s2(uint8_t* s2, uint32_t timestamp, const uint8_t* c1, size_t
 	else
 	{
 		memmove(s2, c1, bytes);
-		be_write_uint32(s2 + 4, timestamp);
+		//be_write_uint32(s2 + 4, timestamp);
 	}
 #else
 	assert(RTMP_HANDSHAKE_SIZE == bytes);
 	memmove(s2, c1, bytes);
 	be_write_uint32(s2 + 4, timestamp);
 #endif
-	return bytes;
+	return (int)bytes;
 }

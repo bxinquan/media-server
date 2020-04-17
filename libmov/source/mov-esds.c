@@ -49,21 +49,32 @@ enum {
 abstract aligned(8) expandable(2^28-1) class BaseDescriptor : bit(8) tag=0 {
 	// empty. To be filled by classes extending this class.
 }
+
+int sizeOfInstance = 0;
+bit(1) nextByte;
+bit(7) sizeOfInstance;
+while(nextByte) {
+	bit(1) nextByte;
+	bit(7) sizeByte;
+	sizeOfInstance = sizeOfInstance<<7 | sizeByte;
+}
 */
-static int mov_read_base_descr(struct mov_t* mov, int* tag,  int* len)
+static int mov_read_base_descr(struct mov_t* mov, int bytes, int* tag,  int* len)
 {
-	int count = 4;
+	int i;
+	uint32_t c;
 
 	*tag = mov_buffer_r8(&mov->io);
 	*len = 0;
-	while (count-- > 0)
+	c = 0x80;
+	for (i = 0; i < 4 && i + 1 < bytes && 0 != (c & 0x80); i++)
 	{
-		uint32_t c = mov_buffer_r8(&mov->io);
+		c = mov_buffer_r8(&mov->io);
 		*len = (*len << 7) | (c & 0x7F);
-		if (0 == (c & 0x80))
-			break;
+		//if (0 == (c & 0x80))
+		//	break;
 	}
-	return 1 + 4 - count;
+	return 1 + i;
 }
 
 static size_t mov_write_base_descr(const struct mov_t* mov, uint8_t tag, uint32_t len)
@@ -138,26 +149,28 @@ abstract class DecoderSpecificInfo extends BaseDescriptor : bit(8)
 	// empty. To be filled by classes extending this class.
 }
 */
-static int mp4_read_decoder_specific_info(struct mov_t* mov, size_t len)
+static int mp4_read_decoder_specific_info(struct mov_t* mov, int len)
 {
 	struct mov_track_t* track = mov->track;
-	if (track->extra_data_size < len)
+	struct mov_sample_entry_t* entry = track->stsd.current;
+	if (entry->extra_data_size < len)
 	{
-		void* p = realloc(track->extra_data, len);
+		void* p = realloc(entry->extra_data, len);
 		if (NULL == p) return ENOMEM;
-		track->extra_data = p;
+		entry->extra_data = p;
 	}
 
-	mov_buffer_read(&mov->io, track->extra_data, len);
-	track->extra_data_size = len;
+	mov_buffer_read(&mov->io, entry->extra_data, len);
+	entry->extra_data_size = len;
 	return mov_buffer_error(&mov->io);
 }
 
 static int mp4_write_decoder_specific_info(const struct mov_t* mov)
 {
-	mov_write_base_descr(mov, ISO_DecSpecificInfoTag, mov->track->extra_data_size);
-	mov_buffer_write(&mov->io, mov->track->extra_data, mov->track->extra_data_size);
-	return mov->track->extra_data_size;
+	const struct mov_sample_entry_t* entry = mov->track->stsd.current;
+	mov_write_base_descr(mov, ISO_DecSpecificInfoTag, entry->extra_data_size);
+	mov_buffer_write(&mov->io, entry->extra_data, entry->extra_data_size);
+	return entry->extra_data_size;
 }
 
 // ISO/IEC 14496-1:2010(E) 7.2.6.6 DecoderConfigDescriptor (p48)
@@ -176,25 +189,27 @@ class DecoderConfigDescriptor extends BaseDescriptor : bit(8) tag=DecoderConfigD
 */
 static int mp4_read_decoder_config_descriptor(struct mov_t* mov, int len)
 {
-	mov->track->stsd[0].object_type_indication = (uint8_t)mov_buffer_r8(&mov->io); /* objectTypeIndication */
-	mov->track->stsd[0].stream_type = (uint8_t)mov_buffer_r8(&mov->io) >> 2; /* stream type */
+	struct mov_sample_entry_t* entry = mov->track->stsd.current;
+	entry->object_type_indication = (uint8_t)mov_buffer_r8(&mov->io); /* objectTypeIndication */
+	entry->stream_type = (uint8_t)mov_buffer_r8(&mov->io) >> 2; /* stream type */
 	/*uint32_t bufferSizeDB = */mov_buffer_r24(&mov->io); /* buffer size db */
 	/*uint32_t max_rate = */mov_buffer_r32(&mov->io); /* max bit-rate */
 	/*uint32_t bit_rate = */mov_buffer_r32(&mov->io); /* avg bit-rate */
-	return mp4_read_tag(mov, len - 13); // mp4_read_decoder_specific_info
+	return mp4_read_tag(mov, (uint64_t)len - 13); // mp4_read_decoder_specific_info
 }
 
 static int mp4_write_decoder_config_descriptor(const struct mov_t* mov)
 {
-	size_t size = 13 + (mov->track->extra_data_size > 0 ? mov->track->extra_data_size + 5 : 0);
+	const struct mov_sample_entry_t* entry = mov->track->stsd.current;
+	int size = 13 + (entry->extra_data_size > 0 ? entry->extra_data_size + 5 : 0);
 	mov_write_base_descr(mov, ISO_DecoderConfigDescrTag, size);
-	mov_buffer_w8(&mov->io, mov->track->stsd[0].object_type_indication);
-	mov_buffer_w8(&mov->io, 0x01/*reserved*/ | (mov->track->stsd[0].stream_type << 2));
+	mov_buffer_w8(&mov->io, entry->object_type_indication);
+	mov_buffer_w8(&mov->io, 0x01/*reserved*/ | (entry->stream_type << 2));
 	mov_buffer_w24(&mov->io, 0); /* buffer size db */
 	mov_buffer_w32(&mov->io, 88360); /* max bit-rate */
 	mov_buffer_w32(&mov->io, 88360); /* avg bit-rate */
 
-	if (mov->track->extra_data_size > 0)
+	if (entry->extra_data_size > 0)
 		mp4_write_decoder_specific_info(mov);
 
 	return size;
@@ -297,10 +312,10 @@ static int mp4_read_tag(struct mov_t* mov, uint64_t bytes)
 	int tag, len;
 	uint64_t p1, p2, offset;
 
-	for (offset = 0; offset + 5 < bytes; offset += len)
+	for (offset = 0; offset < bytes; offset += len)
 	{
 		tag = len = 0;
-		offset += mov_read_base_descr(mov, &tag, &len);
+		offset += mov_read_base_descr(mov, (int)(bytes - offset), &tag, &len);
 		if (offset + len > bytes)
 			break;
 
@@ -344,8 +359,9 @@ int mov_read_esds(struct mov_t* mov, const struct mov_box_t* box)
 
 static size_t mp4_write_es_descriptor(const struct mov_t* mov)
 {
-	size_t size = 3; // mp4_write_decoder_config_descriptor
-	size += 5 + 13 + (mov->track->extra_data_size > 0 ? mov->track->extra_data_size + 5 : 0); // mp4_write_decoder_config_descriptor
+	uint32_t size = 3; // mp4_write_decoder_config_descriptor
+	const struct mov_sample_entry_t* entry = mov->track->stsd.current;
+	size += 5 + 13 + (entry->extra_data_size > 0 ? entry->extra_data_size + 5 : 0); // mp4_write_decoder_config_descriptor
 	size += 5 + 1; // mp4_write_sl_config_descriptor
 
 	size += mov_write_base_descr(mov, ISO_ESDescrTag, size);

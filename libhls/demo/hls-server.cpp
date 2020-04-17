@@ -14,19 +14,22 @@
 #include "sys/system.h"
 #include "sys/path.h"
 #include "cstringext.h"
+#include "utf8codec.h"
 #include <string.h>
 #include <assert.h>
 #include <map>
 #include <list>
+#include <atomic>
 #include <vector>
 #include <string>
 
-#define CWD "./"
+#define CWD "d:\\video\\"
 
 extern "C" int http_list_dir(http_session_t* session, const char* path);
 
 struct hls_ts_t
 {
+    std::atomic<int> ref;
 	void* data;
 	size_t size;
 	std::string name;
@@ -44,7 +47,7 @@ struct hls_playlist_t
 	uint8_t packet[2 * 1024 * 1024];
 
 	int i;
-	std::list<hls_ts_t> files;
+	std::list<hls_ts_t*> files;
 };
 
 static std::map<std::string, hls_playlist_t*> s_playlists;
@@ -66,18 +69,24 @@ static int hls_handler(void* param, const void* data, size_t bytes, int64_t pts,
 	hls_m3u8_add(playlist->m3u8, name, pts, duration, discontinue);
 
 	// add new segment
-	hls_ts_t ts;
-	ts.name = name;
-	ts.size = bytes;
-	ts.data = malloc(bytes);
-	memcpy(ts.data, data, bytes);
+	hls_ts_t* ts = new hls_ts_t;
+	ts->ref = 1;
+	ts->name = name;
+	ts->size = bytes;
+	ts->data = malloc(bytes);
+	memcpy(ts->data, data, bytes);
 	playlist->files.push_back(ts);
 
 	// remove oldest segment
 	while(playlist->files.size() > HLS_LIVE_NUM + 1)
 	{
-		free(playlist->files.front().data);
+		ts = playlist->files.front();
 		playlist->files.pop_front();
+        if (0 == std::atomic_fetch_sub(&ts->ref, 1) - 1)
+		{
+			free(ts->data);
+			delete ts;
+		}
 	}
 
 	printf("new segment: %s\n", name);
@@ -114,11 +123,15 @@ static int STDCALL hls_server_worker(void* param)
 	uint64_t clock;
 	uint32_t timestamp;
 	hls_playlist_t* playlist = (hls_playlist_t*)param;
+
 	std::string file = playlist->file + ".flv";
+	UTF8Decode utf8(file.c_str());
+	std::string fullpath = CWD;
+	fullpath += utf8;
 
 	while (1)
 	{
-		void* flv = flv_reader_create(file.c_str());
+		void* flv = flv_reader_create(fullpath.c_str());
 		flv_demuxer_t* demuxer = flv_demuxer_create(flv_handler, playlist->hls);
 
 		clock = 0;
@@ -164,20 +177,33 @@ static int hls_server_m3u8(http_session_t* session, const std::string& path)
 	return 0;
 }
 
+static int hls_server_ts_onsend(void* param, int code, size_t bytes)
+{
+	hls_ts_t* ts = (hls_ts_t*)param;
+    if (0 == std::atomic_fetch_sub(&ts->ref, 1) - 1)
+	{
+		free(ts->data);
+		delete ts;
+	}
+	return 0;
+}
+
 static int hls_server_ts(http_session_t* session, const std::string& path, const std::string& ts)
 {
 	hls_playlist_t* playlist = s_playlists.find(path)->second;
 	assert(playlist);
 
-	std::list<hls_ts_t>::iterator i;
+	std::list<hls_ts_t*>::iterator i;
 	std::string file = path + '/' + ts;
 	for(i = playlist->files.begin(); i != playlist->files.end(); ++i)
 	{
-		if(i->name == file)
+		hls_ts_t* ts = *i;
+		if(ts->name == file)
 		{
+            std::atomic_fetch_add(&ts->ref, 1);
 			http_server_set_header(session, "Access-Control-Allow-Origin", "*");
 			http_server_set_header(session, "Access-Control-Allow-Methods", "GET, POST, PUT");
-			http_server_reply(session, 200, i->data, i->size);
+			http_server_send(session, 200, ts->data, ts->size, hls_server_ts_onsend, ts);
 			printf("load file %s\n", file.c_str());
 			return 0;
 		}
@@ -222,8 +248,10 @@ static int hls_server_onlive(void* /*http*/, http_session_t* session, const char
 
 static int hls_server_onvod(void* /*http*/, http_session_t* session, const char* /*method*/, const char* path)
 {
+	UTF8Decode utf8(path + 5 /* /vod/ */);
 	std::string fullpath = CWD;
-	fullpath += path + 5 /* /vod/ */;
+	fullpath += utf8;
+	printf("hls_server_onvod: %s\n", fullpath.c_str());
 
 	if (path_testdir(fullpath.c_str()))
 	{
@@ -250,19 +278,19 @@ static int hls_server_onvod(void* /*http*/, http_session_t* session, const char*
 
 void hls_server_test(const char* ip, int port)
 {
-	aio_worker_init(1);
+	aio_worker_init(4);
 	http_server_t* http = http_server_create(ip, port);
 	http_server_set_handler(http, http_server_route, http);
 	http_server_addroute("/live/", hls_server_onlive);
 	http_server_addroute("/vod/", hls_server_onvod);
 
 	// http process
-	while(aio_socket_process(10000) >= 0)
+	while('q' != getchar())
 	{
 	}
 
 	http_server_destroy(http);
-	aio_worker_clean(1);
+	aio_worker_clean(4);
 }
 
 #if defined(_HLS_SERVER_TEST_)

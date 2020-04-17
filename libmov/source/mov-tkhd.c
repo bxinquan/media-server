@@ -3,13 +3,13 @@
 
 // ISO/IEC 14496-12:2012(E)
 // 8.3.2 Track Header Box (p31)
-// Box Type : ¡®tkhd¡¯ 
-// Container : Movie Box(¡®trak¡¯) 
+// Box Type : 'tkhd' 
+// Container : Movie Box('trak') 
 // Mandatory : Yes 
 // Quantity : Exactly one
 
 /*
-aligned(8) class TrackHeaderBox extends FullBox(¡®tkhd¡¯, version, flags){ 
+aligned(8) class TrackHeaderBox extends FullBox('tkhd', version, flags){ 
 	if (version==1) { 
 		unsigned int(64) creation_time; 
 		unsigned int(64) modification_time; 
@@ -36,33 +36,51 @@ aligned(8) class TrackHeaderBox extends FullBox(¡®tkhd¡¯, version, flags){
 int mov_read_tkhd(struct mov_t* mov, const struct mov_box_t* box)
 {
 	int i;
-	struct mov_tkhd_t* tkhd = &mov->track->tkhd;
+    uint8_t version;
+    uint32_t flags;
+    uint64_t creation_time;
+    uint64_t modification_time;
+    uint64_t duration;
+    uint32_t track_ID;
+	struct mov_tkhd_t* tkhd;
+    struct mov_track_t* track;
 
-	tkhd->version = mov_buffer_r8(&mov->io);
-	tkhd->flags = mov_buffer_r24(&mov->io);
+	version = mov_buffer_r8(&mov->io);
+	flags = mov_buffer_r24(&mov->io);
 
-	if (1 == tkhd->version)
+	if (1 == version)
 	{
-		tkhd->creation_time = mov_buffer_r64(&mov->io);
-		tkhd->modification_time = mov_buffer_r64(&mov->io);
-		tkhd->track_ID = mov_buffer_r32(&mov->io);
-		/*tkhd->reserved = */mov_buffer_r32(&mov->io);
-		tkhd->duration = mov_buffer_r64(&mov->io);
+		creation_time = mov_buffer_r64(&mov->io);
+		modification_time = mov_buffer_r64(&mov->io);
+		track_ID = mov_buffer_r32(&mov->io);
+		/*reserved = */mov_buffer_r32(&mov->io);
+		duration = mov_buffer_r64(&mov->io);
 	}
 	else
 	{
-		assert(0 == tkhd->version);
-		tkhd->creation_time = mov_buffer_r32(&mov->io);
-		tkhd->modification_time = mov_buffer_r32(&mov->io);
-		tkhd->track_ID = mov_buffer_r32(&mov->io);
-		/*tkhd->reserved = */mov_buffer_r32(&mov->io);
-		tkhd->duration = mov_buffer_r32(&mov->io);
+		assert(0 == version);
+		creation_time = mov_buffer_r32(&mov->io);
+		modification_time = mov_buffer_r32(&mov->io);
+		track_ID = mov_buffer_r32(&mov->io);
+		/*reserved = */mov_buffer_r32(&mov->io);
+		duration = mov_buffer_r32(&mov->io);
 	}
+    mov_buffer_skip(&mov->io, 8); // const unsigned int(32)[2] reserved = 0;
 
-	mov_buffer_skip(&mov->io, 8); // const unsigned int(32)[2] reserved = 0;
-	tkhd->layer = (uint16_t)mov_buffer_r16(&mov->io);
-	tkhd->alternate_group = (uint16_t)mov_buffer_r16(&mov->io);
-	tkhd->volume = (uint16_t)mov_buffer_r16(&mov->io);
+    track = mov_fetch_track(mov, track_ID);
+    if (NULL == track) return -1;
+
+    mov->track = track;
+    tkhd = &mov->track->tkhd;
+	tkhd->version = version;
+    tkhd->flags = flags;
+    tkhd->duration = duration;
+    tkhd->creation_time = creation_time;
+    tkhd->modification_time = modification_time;
+
+	tkhd->layer = (int16_t)mov_buffer_r16(&mov->io);
+	tkhd->alternate_group = (int16_t)mov_buffer_r16(&mov->io);
+	tkhd->volume = (int16_t)mov_buffer_r16(&mov->io);
 	mov_buffer_skip(&mov->io, 2); // const unsigned int(16) reserved = 0;
 	for (i = 0; i < 9; i++)
 		tkhd->matrix[i] = mov_buffer_r32(&mov->io);
@@ -92,7 +110,7 @@ size_t mov_write_tkhd(const struct mov_t* mov)
 
 	mov_buffer_w32(&mov->io, 0); /* reserved */
 	mov_buffer_w32(&mov->io, 0); /* reserved */
-	mov_buffer_w16(&mov->io, 0); /* layer */
+	mov_buffer_w16(&mov->io, tkhd->layer); /* layer */
 	mov_buffer_w16(&mov->io, group); /* alternate_group */
 	//mov_buffer_w16(&mov->io, AVSTREAM_AUDIO == track->stream_type ? 0x0100 : 0); /* volume */
 	mov_buffer_w16(&mov->io, tkhd->volume); /* volume */

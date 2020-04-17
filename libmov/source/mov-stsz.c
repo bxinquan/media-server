@@ -1,6 +1,7 @@
 #include "mov-internal.h"
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 
 // 8.7.3.2 Sample Size Box (p57)
@@ -17,9 +18,10 @@ int mov_read_stsz(struct mov_t* mov, const struct mov_box_t* box)
 	assert(0 == track->sample_count && NULL == track->samples); // duplicated STSZ atom
 	if (track->sample_count < sample_count)
 	{
-		void* p = malloc(sizeof(struct mov_sample_t) * (sample_count + 1));
+		void* p = realloc(track->samples, sizeof(struct mov_sample_t) * (sample_count + 1));
 		if (NULL == p) return ENOMEM;
 		track->samples = (struct mov_sample_t*)p;
+		memset(track->samples, 0, sizeof(struct mov_sample_t) * (sample_count + 1));
 	}
 	track->sample_count = sample_count;
 
@@ -55,9 +57,10 @@ int mov_read_stz2(struct mov_t* mov, const struct mov_box_t* box)
 	assert(0 == track->sample_count && NULL == track->samples); // duplicated STSZ atom
 	if (track->sample_count < sample_count)
 	{
-		void* p = malloc(sizeof(struct mov_sample_t) * (sample_count + 1));
+		void* p = realloc(track->samples, sizeof(struct mov_sample_t) * (sample_count + 1));
 		if (NULL == p) return ENOMEM;
 		track->samples = (struct mov_sample_t*)p;
+		memset(track->samples, 0, sizeof(struct mov_sample_t) * (sample_count + 1));
 	}
 	track->sample_count = sample_count;
 
@@ -97,7 +100,7 @@ int mov_read_stz2(struct mov_t* mov, const struct mov_box_t* box)
 
 size_t mov_write_stsz(const struct mov_t* mov)
 {
-	size_t size, i;
+	uint32_t size, i;
 	const struct mov_track_t* track = mov->track;
 
 	for(i = 1; i < track->sample_count; i++)

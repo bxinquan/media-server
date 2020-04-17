@@ -9,7 +9,7 @@
 #include <assert.h>
 #include <string.h>
 
-size_t psm_read(const uint8_t* data, size_t bytes, psm_t* psm)
+size_t psm_read(struct psm_t *psm, const uint8_t* data, size_t bytes)
 {
 	size_t i, j, k;
 	uint8_t current_next_indicator;
@@ -31,6 +31,8 @@ size_t psm_read(const uint8_t* data, size_t bytes, psm_t* psm)
 
 	// program stream descriptor
 	program_stream_info_length = (data[8] << 8) | data[9];
+	if ((size_t)program_stream_info_length + 6 > bytes)
+		return bytes; // TODO: error
 
 	// TODO: parse descriptor
 
@@ -42,14 +44,16 @@ size_t psm_read(const uint8_t* data, size_t bytes, psm_t* psm)
 
 	j = i + 2;
 	psm->stream_count = 0;
-	while(j < i+2+element_stream_map_length && psm->stream_count < NSTREAM)
+	while(j < i+2+element_stream_map_length && psm->stream_count < sizeof(psm->streams)/sizeof(psm->streams[0]))
 	{
-		psm->streams[psm->stream_count].avtype = data[j];
-		psm->streams[psm->stream_count].pesid = data[j+1];
+		psm->streams[psm->stream_count].codecid = data[j];
+		psm->streams[psm->stream_count].sid = data[j+1];
 		element_stream_info_length = (data[j+2] << 8) | data[j+3];
+		if (j + 4 + element_stream_info_length > bytes)
+			return bytes; // TODO: error
 
 		k = j + 4;
-		if(0xFD == psm->streams[psm->stream_count].pesid && 0 == single_extension_stream_flag)
+		if(0xFD == psm->streams[psm->stream_count].sid && 0 == single_extension_stream_flag)
 		{
 //			uint8_t pseudo_descriptor_tag = data[k];
 //			uint8_t pseudo_descriptor_length = data[k+1];
@@ -58,10 +62,10 @@ size_t psm_read(const uint8_t* data, size_t bytes, psm_t* psm)
 			k += 3;
 		}
 
-		while(k < j + 4 + element_stream_info_length)
+		while(k + 2 < j + 4 + element_stream_info_length)
 		{
 			// descriptor()
-			k += mpeg_elment_descriptor(data+k, bytes-k);
+			k += mpeg_elment_descriptor(data+k, j + 4 + element_stream_info_length - k);
 		}
 
 		++psm->stream_count;
@@ -70,11 +74,11 @@ size_t psm_read(const uint8_t* data, size_t bytes, psm_t* psm)
 	}
 
 //	assert(j+4 == program_stream_map_length+6);
-//	assert(0 == crc32(-1, data, program_stream_map_length+6));
+	assert(0 == mpeg_crc32(0xffffffff, data, program_stream_map_length+6));
 	return program_stream_map_length+6;
 }
 
-size_t psm_write(const psm_t *psm, uint8_t *data)
+size_t psm_write(const struct psm_t *psm, uint8_t *data)
 {
 	// Table 2-41 ¨C Program stream map(p79)
 
@@ -106,12 +110,12 @@ size_t psm_write(const psm_t *psm, uint8_t *data)
 	j = 12;
 	for(i = 0; i < psm->stream_count; i++)
 	{
-		assert(PES_SID_EXTEND != psm->streams[i].pesid);
+		assert(PES_SID_EXTEND != psm->streams[i].sid);
 
 		// stream_type:8
-		data[j++] = psm->streams[i].avtype;
+		data[j++] = psm->streams[i].codecid;
 		// elementary_stream_id:8
-		data[j++] = psm->streams[i].pesid;
+		data[j++] = psm->streams[i].sid;
 		// elementary_stream_info_length:16
 		nbo_w16(data+j, psm->streams[i].esinfo_len);
 		// descriptor()
@@ -121,12 +125,12 @@ size_t psm_write(const psm_t *psm, uint8_t *data)
 	}
 
 	// elementary_stream_map_length 16-bits
-	nbo_w16(data+10, (uint16_t)(j-12+4));
+	nbo_w16(data+10, (uint16_t)(j-12));
 	// program_stream_map_length:16
 	nbo_w16(data+4, (uint16_t)(j-6+4)); // 4-bytes crc32
 
 	// crc32
-	crc = crc32(0xffffffff, data, (uint32_t)j);
+	crc = mpeg_crc32(0xffffffff, data, (uint32_t)j);
 	data[j+3] = (uint8_t)((crc >> 24) & 0xFF);
 	data[j+2] = (uint8_t)((crc >> 16) & 0xFF);
 	data[j+1] = (uint8_t)((crc >> 8) & 0xFF);

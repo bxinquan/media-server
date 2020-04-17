@@ -24,7 +24,7 @@ struct rtsp_handler_t
 	/// @return 0-ok, other-error
 	int (*send)(void* ptr2, const void* data, size_t bytes);
 
-	/// RTSP DESCRIBE request(call rtsp_server_reply_setup)
+	/// RTSP DESCRIBE request(call rtsp_server_reply_describe)
 	/// @param[in] ptr user-defined parameter
 	/// @param[in] uri request uri
 	/// @return 0-ok, other-error
@@ -59,6 +59,35 @@ struct rtsp_handler_t
 	/// @param[in] uri request uri
 	/// @return 0-ok, other-error code
 	int (*onteardown)(void* ptr, rtsp_server_t* rtsp, const char* uri, const char* session);
+
+    /// RTSP ANNOUNCE request(call rtsp_server_reply_announce)
+    /// @param[in] ptr user-defined parameter
+    /// @param[in] uri request uri
+    /// @param[in] sdp RTSP SDP
+    /// @return 0-ok, other-error
+    int (*onannounce)(void* ptr, rtsp_server_t* rtsp, const char* uri, const char* sdp);
+
+    /// RTSP RECORD request(call rtsp_server_reply_record)
+    /// @param[in] ptr user-defined parameter
+    /// @param[in] session RTSP Session
+    /// @param[in] npt request begin time, NULL if don't have Range parameter, 0 represent now
+    /// @param[in] scale request scale, NULL if don't have Scale parameter
+    /// @return 0-ok, other-error code
+    int (*onrecord)(void* ptr, rtsp_server_t* rtsp, const char* uri, const char* session, const int64_t *npt, const double *scale);
+
+	/// RTSP OPTIONS request
+	/// @param[in] uri default is '*' 
+	/// @return 0-ok, other-error code
+	int (*onoptions)(void* ptr, rtsp_server_t* rtsp, const char* uri);
+
+	/// RTSP GET_PARAMETER/SET_PARAMETER request
+	/// use rtsp_server_get_header("content-type") to if need
+	/// @param[in] uri the presentation/stream uri
+	/// @param[in] session RTSP session
+	/// @param[in] content paramter(s), NULL for test client or server liveness ("ping")
+	/// @return 0-ok, other-error code
+	int (*ongetparameter)(void* ptr, rtsp_server_t* rtsp, const char* uri, const char* session, const void* content, int bytes);
+	int (*onsetparameter)(void* ptr, rtsp_server_t* rtsp, const char* uri, const char* session, const void* content, int bytes);
 };
 
 /// create (reuse-able) rtsp server
@@ -76,9 +105,8 @@ rtsp_server_t* rtsp_server_create(const char ip[65], unsigned short port, struct
 int rtsp_server_destroy(rtsp_server_t* server);
 
 /// client request
-/// @param[in] parser rtsp parser
 /// @param[in] data rtsp request
-/// @param[inout] bytes input data length, output remain length
+/// @param[in,out] bytes input data length, output remain length
 /// @return 0-ok, 1-need more data, other-error
 int rtsp_server_input(rtsp_server_t* rtsp, const void* data, size_t* bytes);
 
@@ -117,6 +145,36 @@ int rtsp_server_reply_pause(rtsp_server_t* rtsp, int code);
 /// @param[in] code RTSP status-code(200-OK, 301-Move Permanently, ...)
 /// @return 0-ok, other-error code
 int rtsp_server_reply_teardown(rtsp_server_t* rtsp, int code);
+
+/// RTSP ANNOUNCE reply
+/// @param[in] rtsp request handle
+/// @param[in] code RTSP status-code(200-OK, 301-Move Permanently, ...)
+/// @return 0-ok, other-error code
+int rtsp_server_reply_announce(rtsp_server_t* rtsp, int code);
+
+/// RTSP RECORD reply
+/// @param[in] rtsp request handle
+/// @param[in] code RTSP status-code(200-OK, 301-Move Permanently, ...)
+/// @param[in] nptstart Range start time(ms) [optional]
+/// @param[in] nptend Range end time(ms) [optional]
+/// @return 0-ok, other-error code
+int rtsp_server_reply_record(rtsp_server_t* rtsp, int code, const int64_t *nptstart, const int64_t *nptend);
+
+/// RTSP OPTIONS reply
+/// @return 0-ok, other-error code
+int rtsp_server_reply_options(rtsp_server_t* rtsp, int code);
+
+/// RTSP GET_PARAMETER reply(content-type/content-encoding/content-language copy from request header)
+/// @param[in] rtsp request handle
+/// @param[in] code RTSP status-code(200-OK...)
+/// @return 0-ok, other-error code
+int rtsp_server_reply_get_parameter(rtsp_server_t* rtsp, int code, const void* content, int bytes);
+
+/// RTSP SET_PARAMETER reply
+/// @param[in] rtsp request handle
+/// @param[in] code RTSP status-code(200-OK...)
+/// @return 0-ok, other-error code
+int rtsp_server_reply_set_parameter(rtsp_server_t* rtsp, int code);
 
 /// RTSP send Embedded (Interleaved) Binary Data
 /// @param[in] rtsp request handle

@@ -12,7 +12,7 @@ struct mov_ftyp_t
 	uint32_t minor_version;
 
 	uint32_t compatible_brands[N_BRAND];
-	size_t brands_count;
+	int brands_count;
 };
 
 // A.4 Temporal structure of the media (p148)
@@ -83,44 +83,59 @@ struct mov_mdhd_t
 	uint32_t pre_defined : 16;
 };
 
+struct mov_sample_entry_t
+{
+    uint16_t data_reference_index; // ref [dref] Data Reference Boxes
+    uint8_t object_type_indication; // H.264/AAC MOV_OBJECT_XXX (DecoderConfigDescriptor)
+    uint8_t stream_type; // MP4_STREAM_XXX
+	uint8_t* extra_data; // H.264 sps/pps
+	int extra_data_size;
+
+    union
+    {
+        struct mov_bitrate_t
+        {
+            uint32_t bufferSizeDB;
+            uint32_t maxBitrate;
+            uint32_t avgBitrate;
+        } bitrate;
+
+        //struct mov_uri_t
+        //{
+        //	char uri[256];
+        //} uri;
+
+        // visual
+        struct mov_visual_sample_t
+        {
+            uint16_t width;
+            uint16_t height;
+            uint32_t horizresolution; // 0x00480000 - 72dpi
+            uint32_t vertresolution; // 0x00480000 - 72dpi
+            uint16_t frame_count; // default 1
+            uint16_t depth; // 0x0018
+
+			struct mov_pixel_aspect_ratio_t
+			{
+				uint32_t h_spacing;
+				uint32_t v_spacing;
+			} pasp;
+        } visual;
+
+        struct mov_audio_sample_t
+        {
+            uint16_t channelcount; // default 2
+            uint16_t samplesize; // default 16
+            uint32_t samplerate; // { default samplerate of media } << 16
+        } audio;
+    } u;
+};
+
 struct mov_stsd_t
 {
-	uint16_t data_reference_index; // ref [stsc] sample_description_index
-	uint8_t object_type_indication; // H.264/AAC MOV_OBJECT_XXX (DecoderConfigDescriptor)
-	uint8_t stream_type; // MP4_STREAM_XXX
-
-	union
-	{
-		struct mov_bitrate_t
-		{
-			uint32_t bufferSizeDB;
-			uint32_t maxBitrate;
-			uint32_t avgBitrate;
-		} bitrate;
-
-		//struct mov_uri_t
-		//{
-		//	char uri[256];
-		//} uri;
-
-		// visual
-		struct mov_visual_sample_t
-		{
-			uint16_t width;
-			uint16_t height;
-			uint32_t horizresolution; // 0x00480000 - 72dpi
-			uint32_t vertresolution; // 0x00480000 - 72dpi
-			uint16_t frame_count; // default 1
-			uint16_t depth; // 0x0018
-		} visual;
-
-		struct mov_audio_sample_t
-		{
-			uint16_t channelcount; // default 2
-			uint16_t samplesize; // default 16
-			uint32_t samplerate; // { default samplerate of media } << 16
-		} audio;
-	} u;
+    struct mov_sample_entry_t *current; // current entry, read only
+    struct mov_sample_entry_t *entries;
+    uint32_t entry_count;
 };
 
 struct mov_stts_t

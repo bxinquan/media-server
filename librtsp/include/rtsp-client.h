@@ -25,16 +25,17 @@ struct rtsp_client_handler_t
 	///@return >0-sent bytes, <0-error
 	int (*send)(void* param, const char* uri, const void* req, size_t bytes);
 	///create rtp/rtcp port 
-	int (*rtpport)(void* param, unsigned short *rtp); // udp only(rtp%2=0 and rtcp=rtp+1), rtp=0 if you want to use RTP over RTSP(tcp mode)
+	int (*rtpport)(void* param, int media, unsigned short *rtp); // udp only(rtp%2=0 and rtcp=rtp+1), rtp=0 if you want to use RTP over RTSP(tcp mode)
 
 	/// rtsp_client_announce callback only
-	void (*onannounce)(void* param);
+	int (*onannounce)(void* param);
 
 	/// call rtsp_client_setup
 	int (*ondescribe)(void* param, const char* sdp);
 
 	int (*onsetup)(void* param);
 	int (*onplay)(void* param, int media, const uint64_t *nptbegin, const uint64_t *nptend, const double *scale, const struct rtsp_rtp_info_t* rtpinfo, int count); // play
+    int (*onrecord)(void* param, int media, const uint64_t *nptbegin, const uint64_t *nptend, const double *scale, const struct rtsp_rtp_info_t* rtpinfo, int count); // record
 	int (*onpause)(void* param);
 	int (*onteardown)(void* param);
 
@@ -63,7 +64,6 @@ const char* rtsp_client_get_header(rtsp_client_t* rtsp, const char* name);
 int rtsp_client_describe(struct rtsp_client_t* rtsp);
 
 /// rtsp setup
-/// @param[in] uri media resource uri
 /// @param[in] sdp resource info. it can be null, sdp will get by describe command
 /// @return 0-ok, -EACCESS-auth required, try again, other-error.
 int rtsp_client_setup(rtsp_client_t* rtsp, const char* sdp);
@@ -91,10 +91,19 @@ int rtsp_client_pause(rtsp_client_t* rtsp);
 /// @return 0-ok, other-error.
 int rtsp_client_announce(rtsp_client_t* rtsp, const char* sdp);
 
+/// record session(publish)
+/// call onrecord on done
+/// @param[in] npt RECORD range parameter [optional, NULL is acceptable]
+/// @param[in] scale RECORD scale parameter [optional, NULL is acceptable]
+/// @return 0-ok, other-error.
+/// Notice: if npt and scale is null, resume record only
+int rtsp_client_record(struct rtsp_client_t *rtsp, const uint64_t *npt, const float *scale);
+
 /// SDP API
 int rtsp_client_media_count(rtsp_client_t* rtsp);
 const struct rtsp_header_transport_t* rtsp_client_get_media_transport(rtsp_client_t* rtsp, int media);
 const char* rtsp_client_get_media_encoding(rtsp_client_t* rtsp, int media);
+const char* rtsp_client_get_media_fmtp(rtsp_client_t* rtsp, int media);
 int rtsp_client_get_media_payload(rtsp_client_t* rtsp, int media);
 int rtsp_client_get_media_rate(rtsp_client_t* rtsp, int media); // return 0 if unknown rate
 

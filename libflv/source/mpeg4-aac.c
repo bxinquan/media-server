@@ -2,6 +2,11 @@
 #include <assert.h>
 #include <string.h>
 
+int mpeg4_aac_adts_pce_load(const uint8_t* data, size_t bytes, struct mpeg4_aac_t* aac);
+int mpeg4_aac_adts_pce_save(uint8_t* data, size_t bytes, const struct mpeg4_aac_t* aac);
+int mpeg4_aac_audio_specific_config_load2(const uint8_t* data, size_t bytes, struct mpeg4_aac_t* aac);
+int mpeg4_aac_audio_specific_config_save2(const struct mpeg4_aac_t* aac, uint8_t* data, size_t bytes);
+
 /*
 // ISO-14496-3 adts_frame (p122)
 
@@ -33,6 +38,7 @@ int mpeg4_aac_adts_load(const uint8_t* data, size_t bytes, struct mpeg4_aac_t* a
 {
 	if (bytes < 7) return -1;
 
+	memset(aac, 0, sizeof(struct mpeg4_aac_t));
 	assert(0xFF == data[0] && 0xF0 == (data[1] & 0xF0)); /* syncword */
 	aac->profile = ((data[2] >> 6) & 0x03) + 1; // 2 bits: the MPEG-2 Audio Object Type add 1
 	aac->sampling_frequency_index = (data[2] >> 2) & 0x0F; // 4 bits: MPEG-4 Sampling Frequency Index (15 is forbidden)
@@ -40,6 +46,11 @@ int mpeg4_aac_adts_load(const uint8_t* data, size_t bytes, struct mpeg4_aac_t* a
 	assert(aac->profile > 0 && aac->profile < 31);
 	assert(aac->channel_configuration >= 0 && aac->channel_configuration <= 7);
 	assert(aac->sampling_frequency_index >= 0 && aac->sampling_frequency_index <= 0xc);
+	aac->channels = aac->channel_configuration;
+	aac->sampling_frequency = mpeg4_aac_audio_frequency_to(aac->sampling_frequency_index);
+
+	if (0 == aac->channel_configuration)
+		return mpeg4_aac_adts_pce_load(data, bytes, aac);
 	return 7;
 }
 
@@ -50,6 +61,9 @@ int mpeg4_aac_adts_save(const struct mpeg4_aac_t* aac, size_t payload, uint8_t* 
 	size_t len = payload + 7;
 	if (bytes < 7 || len >= (1 << 12)) return -1;
 
+	if (0 == aac->channel_configuration && aac->npce > 0)
+		len += mpeg4_aac_adts_pce_save(data, bytes, aac);
+
 	assert(aac->profile > 0 && aac->profile < 31);
 	assert(aac->channel_configuration >= 0 && aac->channel_configuration <= 7);
 	assert(aac->sampling_frequency_index >= 0 && aac->sampling_frequency_index <= 0xc);
@@ -59,10 +73,18 @@ int mpeg4_aac_adts_save(const struct mpeg4_aac_t* aac, size_t payload, uint8_t* 
 	data[3] = ((aac->channel_configuration & 0x03) << 6) | ((len >> 11) & 0x03); /*0-original_copy*/ /*0-home*/ /*0-copyright_identification_bit*/ /*0-copyright_identification_start*/
 	data[4] = (uint8_t)(len >> 3);
 	data[5] = ((len & 0x07) << 5) | 0x1F;
-	data[6] = 0xFC | ((len / 1024) & 0x03);
-	return 7;
+	data[6] = 0xFC /*| ((len / (1024 * aac->channels)) & 0x03)*/;
+	return (int)(len - payload);
 }
 
+int mpeg4_aac_adts_frame_length(const uint8_t* data, size_t bytes)
+{
+	uint16_t len;
+	if (bytes < 7) return -1;
+	assert(0xFF == data[0] && 0xF0 == (data[1] & 0xF0)); /* syncword */
+	len = ((uint16_t)(data[3] & 0x03) << 11) | ((uint16_t)data[4] << 3) | ((uint16_t)(data[5] >> 5) & 0x07);
+	return len;
+}
 
 // ISO-14496-3 AudioSpecificConfig (p52)
 /*
@@ -81,25 +103,36 @@ int mpeg4_aac_audio_specific_config_load(const uint8_t* data, size_t bytes, stru
 {
 	if (bytes < 2) return -1;
 
+	memset(aac, 0, sizeof(struct mpeg4_aac_t));
 	aac->profile = (data[0] >> 3) & 0x1F;
 	aac->sampling_frequency_index = ((data[0] & 0x7) << 1) | ((data[1] >> 7) & 0x01);
 	aac->channel_configuration = (data[1] >> 3) & 0x0F;
 	assert(aac->profile > 0 && aac->profile < 31);
 	assert(aac->channel_configuration >= 0 && aac->channel_configuration <= 7);
 	assert(aac->sampling_frequency_index >= 0 && aac->sampling_frequency_index <= 0xc);
+	aac->channels = aac->channel_configuration;
+	aac->sampling_frequency = mpeg4_aac_audio_frequency_to(aac->sampling_frequency_index);
+
+	if (0 == aac->channel_configuration || 31 == aac->profile || 0x0F == aac->sampling_frequency_index)
+		return mpeg4_aac_audio_specific_config_load2(data, bytes, aac);
 	return 2;
 }
 
 // ISO-14496-3 AudioSpecificConfig
 int mpeg4_aac_audio_specific_config_save(const struct mpeg4_aac_t* aac, uint8_t* data, size_t bytes)
 {
-	if (bytes < 2) return -1;
+	uint8_t channel_configuration;
+	if (bytes < 2+aac->npce) return -1;
 
+	channel_configuration = aac->npce > 0 ? 0 : aac->channel_configuration;
 	assert(aac->profile > 0 && aac->profile < 31);
 	assert(aac->channel_configuration >= 0 && aac->channel_configuration <= 7);
 	assert(aac->sampling_frequency_index >= 0 && aac->sampling_frequency_index <= 0xc);
 	data[0] = (aac->profile << 3) | ((aac->sampling_frequency_index >> 1) & 0x07);
-	data[1] = ((aac->sampling_frequency_index & 0x01) << 7) | ((aac->channel_configuration & 0xF) << 3) | (0 << 2) /* frame length-1024 samples*/ | (0 << 1) /* don't depend on core */ | 0 /* not extension */;
+	data[1] = ((aac->sampling_frequency_index & 0x01) << 7) | ((channel_configuration & 0xF) << 3) | (0 << 2) /* frame length-1024 samples*/ | (0 << 1) /* don't depend on core */ | 0 /* not extension */;
+
+	if (0 == aac->channel_configuration && aac->npce > 0)
+		return mpeg4_aac_audio_specific_config_save2(aac, data, bytes);
 	return 2;
 }
 

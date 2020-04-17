@@ -1,12 +1,13 @@
 #ifndef _rtsp_client_internal_h_
 #define _rtsp_client_internal_h_
 
+#include "rtsp-media.h"
 #include "rtsp-client.h"
 #include "rtp-over-rtsp.h"
 #include "http-header-auth.h"
 #include "rtsp-header-session.h"
 #include "rtsp-header-transport.h"
-#include "rtsp-parser.h"
+#include "http-parser.h"
 #include "sdp.h"
 #include <errno.h>
 #include <stdio.h>
@@ -20,32 +21,13 @@
 #endif
 
 #define USER_AGENT "RTSP client v0.1"
-#define N_MEDIA 2
-#define N_MEDIA_FORMAT 3
-
-struct rtsp_media_t
-{
-	char uri[256]; // rtsp setup
-
-	//unsigned int cseq; // rtsp sequence, unused if aggregate control available
-	struct rtsp_header_session_t session;
-	struct rtsp_header_transport_t transport;
-
-	int avformat_count;
-	struct avformat_t
-	{
-		int fmt; // RTP payload type
-		int rate; // RTP payload frequency
-		int channel; // RTP payload channel
-		char encoding[64]; // RTP payload encoding
-		char spspps[128]; // H.264 only
-	} avformats[N_MEDIA_FORMAT];
-};
+#define N_MEDIA 8
 
 enum rtsp_state_t
 {
 	RTSP_INIT,
 	RTSP_ANNOUNCE,
+    RTSP_RECORD,
 	RTSP_DESCRIBE,
 	RTSP_SETUP,
 	RTSP_PLAY,
@@ -61,7 +43,8 @@ struct rtsp_client_t
 	struct rtsp_client_handler_t handler;
 	void* param;
 
-	rtsp_parser_t* parser;
+    const char* announce; // announce sdp
+	http_parser_t* parser;
 	enum rtsp_state_t state;
 	int parser_need_more_data;
 	int progress;
@@ -72,12 +55,14 @@ struct rtsp_client_t
 	sdp_t* sdp;
 	int media_count;
 	struct rtsp_media_t media[N_MEDIA];
-	struct rtsp_media_t *media_ptr;
+	struct rtsp_header_session_t session[N_MEDIA];
+	struct rtsp_header_transport_t transport[N_MEDIA];
 
 	// media
 	char range[64]; // rtsp header Range
 	char speed[16]; // rtsp header speed
-	char req[2048];
+    char scale[16]; // rtsp header scale
+    char req[2048];
 
 	char uri[256];
 	char baseuri[256]; // Content-Base
@@ -89,19 +74,9 @@ struct rtsp_client_t
 	int auth_failed;
 	char usr[128];
 	char pwd[256];
-	char cnonce[32];
-	char nc[32];
 	char authenrization[1024];
 	struct http_header_www_authenticate_t auth;
 };
-
-static inline struct rtsp_media_t* rtsp_get_media(struct rtsp_client_t *ctx, int i)
-{
-	if(i < 0 || i >= ctx->media_count)
-		return NULL;
-
-	return i < N_MEDIA ? (ctx->media + i) : (ctx->media_ptr + i - N_MEDIA);
-}
 
 //int rtsp_client_describe(struct rtsp_client_t* rtsp);
 //int rtsp_client_announce(struct rtsp_client_t* rtsp, const char* sdp);
@@ -119,6 +94,7 @@ int rtsp_client_play_onreply(struct rtsp_client_t* rtsp, void* parser);
 int rtsp_client_pause_onreply(struct rtsp_client_t* rtsp, void* parser);
 int rtsp_client_teardown_onreply(struct rtsp_client_t* rtsp, void* parser);
 int rtsp_client_options_onreply(struct rtsp_client_t* rtsp, void* parser);
+int rtsp_client_record_onreply(struct rtsp_client_t* rtsp, void* parser);
 int rtsp_client_get_parameter_onreply(struct rtsp_client_t* rtsp, void* parser);
 int rtsp_client_set_parameter_onreply(struct rtsp_client_t* rtsp, void* parser);
 

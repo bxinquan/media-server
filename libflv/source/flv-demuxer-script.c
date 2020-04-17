@@ -11,12 +11,12 @@ int flv_demuxer_script(struct flv_demuxer_t* flv, const uint8_t* data, size_t by
 	const uint8_t* end;
 	char buffer[64] = { 0 };
 	double audiocodecid = 0;
-	double audiodatarate = 0;
+	double audiodatarate = 0; // bitrate / 1024
 	double audiodelay = 0;
 	double audiosamplerate = 0;
 	double audiosamplesize = 0;
 	double videocodecid = 0;
-	double videodatarate = 0;
+	double videodatarate = 0; // bitrate / 1024
 	double framerate = 0;
 	double height = 0;
 	double width = 0;
@@ -52,7 +52,7 @@ int flv_demuxer_script(struct flv_demuxer_t* flv, const uint8_t* data, size_t by
 
 	AMF_OBJECT_ITEM_VALUE(prop[15], AMF_OBJECT, "keyframes", keyframes, 2); // FLV I-index
 
-	AMF_OBJECT_ITEM_VALUE(items[0], AMF_ECMA_ARRAY, "onMetaData", prop, sizeof(prop) / sizeof(prop[0]));
+	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "onMetaData", prop, sizeof(prop) / sizeof(prop[0]));
 #undef AMF_OBJECT_ITEM_VALUE
 
 	end = data + bytes;
@@ -61,8 +61,18 @@ int flv_demuxer_script(struct flv_demuxer_t* flv, const uint8_t* data, size_t by
 		assert(0);
 		return -1;
 	}
+	
+	// filter @setDataFrame
+	if (0 == strcmp(buffer, "@setDataFrame"))
+	{
+		if (AMF_STRING != data[0] || NULL == (data = AMFReadString(data + 1, end, 0, buffer, sizeof(buffer) - 1)))
+		{
+			assert(0);
+			return -1;
+		}
+	}
 
-	// onTextData/onCaption/onCaptionInfo/onCuePoint
+	// onTextData/onCaption/onCaptionInfo/onCuePoint/|RtmpSampleAccess
 	if (0 != strcmp(buffer, "onMetaData"))
 		return 0; // skip
 

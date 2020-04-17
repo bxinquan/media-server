@@ -1,3 +1,16 @@
+ifdef PLATFORM
+	CROSS:=$(PLATFORM)-
+else
+	CROSS:=
+	PLATFORM:=linux
+endif
+
+ifeq ($(RELEASE),1)
+	BUILD:=release
+else
+	BUILD:=debug
+endif
+
 all:
 	$(MAKE) -C libflv
 	$(MAKE) -C librtmp
@@ -7,6 +20,7 @@ all:
 	$(MAKE) -C librtsp
 	$(MAKE) -C libmov
 	$(MAKE) -C libdash
+	$(MAKE) -C libsip
 	
 clean:
 	$(MAKE) -C libflv clean
@@ -17,3 +31,11 @@ clean:
 	$(MAKE) -C librtsp clean
 	$(MAKE) -C libmov clean
 	$(MAKE) -C libdash clean
+	$(MAKE) -C libsip clean
+	$(MAKE) -C test clean
+	
+.PHONY : test
+test:
+	$(MAKE) -C ../sdk
+	$(MAKE) -C test
+	ln -sf ../sdk/libaio/$(BUILD).$(PLATFORM)/libaio.so . &&  ./test/$(BUILD).$(PLATFORM)/test

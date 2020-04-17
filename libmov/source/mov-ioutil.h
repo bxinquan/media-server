@@ -22,7 +22,7 @@ static inline uint64_t mov_buffer_tell(const struct mov_ioutil_t* io)
 
 static inline void mov_buffer_seek(const struct mov_ioutil_t* io, uint64_t offset)
 {
-	if (0 == io->error)
+//	if (0 == io->error)
 		((struct mov_ioutil_t*)io)->error = io->io.seek(io->param, offset);
 }
 
@@ -82,7 +82,7 @@ static inline uint32_t mov_buffer_r32(struct mov_ioutil_t* io)
 static inline uint64_t mov_buffer_r64(struct mov_ioutil_t* io)
 {
 	uint64_t v;
-	v = mov_buffer_r32(io) << 16;
+	v = ((uint64_t)mov_buffer_r32(io)) << 32;
 	v |= mov_buffer_r32(io);
 	return v;
 }
